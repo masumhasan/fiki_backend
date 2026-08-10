@@ -1,0 +1,65 @@
+import cors from "cors";
+import express, { Express } from "express";
+import helmet from "helmet";
+import { env } from "./config/env.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+import { requestIdMiddleware } from "./middleware/requestId.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import authRoutes from "./routes/authRoutes.js";
+import driverRoutes from "./routes/driverRoutes.js";
+import healthRoutes from "./routes/healthRoutes.js";
+import landingRoutes from "./routes/landingRoutes.js";
+import tripRoutes from "./routes/tripRoutes.js";
+
+const app: Express = express();
+
+// Security Headers
+app.use(helmet());
+
+// Request ID Tracing
+app.use(requestIdMiddleware);
+
+// CORS Policy
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, postman) or matching frontend origins
+      if (!origin || env.CORS_ORIGIN === "*" || origin.includes("localhost")) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+  })
+);
+
+// Body Parser
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Health Check Routes
+app.use("/", healthRoutes);
+
+// API Routes (versioned)
+app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/drivers", driverRoutes);
+app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/trips", tripRoutes);
+app.use("/api/v1/landing", landingRoutes);
+
+// 404 Handler for unmatched routes
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: {
+      code: "ROUTE_NOT_FOUND",
+      message: `Cannot ${req.method} ${req.path}`,
+    },
+  });
+});
+
+// Centralized Error Handling Middleware
+app.use(errorHandler);
+
+export default app;
