@@ -2,12 +2,18 @@ import mongoose, { Document, Schema } from "mongoose";
 
 export type TripStatus =
   | "REQUESTED"
+  | "QUOTE_SENT"
+  | "QUOTE_ACCEPTED"
+  | "QUOTE_DENIED"
+  | "QUOTE_COUNTERED"
   | "ACCEPTED"
   | "DRIVER_ARRIVING"
   | "DRIVER_ARRIVED"
   | "IN_PROGRESS"
   | "COMPLETED"
   | "CANCELLED";
+
+export type QuoteResponseAction = "ACCEPT" | "DENY" | "COUNTER";
 
 export interface ITrip extends Document {
   passengerId: mongoose.Types.ObjectId;
@@ -22,6 +28,13 @@ export interface ITrip extends Document {
   };
   status: TripStatus;
   fare?: number;
+  // Quote workflow fields
+  quotedFare?: number;
+  quotedAt?: Date;
+  quoteNote?: string;
+  counterOffer?: number;
+  counterOfferedAt?: Date;
+  counterOfferNote?: string;
   scheduledTime?: Date;
   startedAt?: Date;
   completedAt?: Date;
@@ -56,6 +69,10 @@ const tripSchema = new Schema<ITrip>(
       type: String,
       enum: [
         "REQUESTED",
+        "QUOTE_SENT",
+        "QUOTE_ACCEPTED",
+        "QUOTE_DENIED",
+        "QUOTE_COUNTERED",
         "ACCEPTED",
         "DRIVER_ARRIVING",
         "DRIVER_ARRIVED",
@@ -68,6 +85,12 @@ const tripSchema = new Schema<ITrip>(
       index: true,
     },
     fare: { type: Number },
+    quotedFare: { type: Number },
+    quotedAt: { type: Date },
+    quoteNote: { type: String },
+    counterOffer: { type: Number },
+    counterOfferedAt: { type: Date },
+    counterOfferNote: { type: String },
     scheduledTime: { type: Date },
     startedAt: { type: Date },
     completedAt: { type: Date },

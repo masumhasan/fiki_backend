@@ -216,6 +216,10 @@ export class DriverController {
       // Enforce valid state machine transitions
       const ALLOWED_TRANSITIONS: Record<TripStatus, TripStatus[]> = {
         REQUESTED: ["ACCEPTED", "CANCELLED"],
+        QUOTE_SENT: ["CANCELLED"],
+        QUOTE_ACCEPTED: ["ACCEPTED", "CANCELLED"],
+        QUOTE_DENIED: [],
+        QUOTE_COUNTERED: ["CANCELLED"],
         ACCEPTED: ["DRIVER_ARRIVING", "CANCELLED"],
         DRIVER_ARRIVING: ["DRIVER_ARRIVED", "CANCELLED"],
         DRIVER_ARRIVED: ["IN_PROGRESS", "CANCELLED"],

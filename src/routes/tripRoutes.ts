@@ -10,5 +10,6 @@ router.use(authenticate);
 router.post("/", (req, res, next) => tripController.requestTrip(req, res, next));
 router.get("/me", (req, res, next) => tripController.getMyTrips(req, res, next));
 router.patch("/:id/cancel", (req, res, next) => tripController.cancelTrip(req, res, next));
+router.patch("/:id/quote/respond", (req, res, next) => tripController.respondToQuote(req, res, next));
 
 export default router;
