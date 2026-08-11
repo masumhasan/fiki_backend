@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { adminController } from "../controllers/adminController.js";
 import { fleetController } from "../controllers/fleetController.js";
+import { vehicleController } from "../controllers/vehicleController.js";
 import { authenticate, authorize } from "../middleware/authMiddleware.js";
 
 const router = Router();
@@ -10,6 +11,7 @@ router.use(authenticate, authorize("ADMIN"));
 
 router.get("/drivers", (req, res, next) => adminController.getDrivers(req, res, next));
 router.patch("/drivers/:id/status", (req, res, next) => adminController.updateDriverStatus(req, res, next));
+router.delete("/drivers/:id", (req, res, next) => adminController.deleteDriver(req, res, next));
 
 router.get("/trips", (req, res, next) => adminController.getTrips(req, res, next));
 router.post("/trips", (req, res, next) => adminController.createTrip(req, res, next));
@@ -21,5 +23,11 @@ router.get("/vehicle-reports", (req, res, next) => fleetController.getVehicleRep
 router.post("/vehicle-reports", (req, res, next) => fleetController.createVehicleReport(req, res, next));
 router.get("/driver-applications", (req, res, next) => fleetController.getDriverApplications(req, res, next));
 router.patch("/driver-applications/:id/status", (req, res, next) => fleetController.updateDriverApplicationStatus(req, res, next));
+router.post("/driver-applications/:id/approve", (req, res, next) => fleetController.approveDriverApplication(req, res, next));
+
+router.get("/vehicles", (req, res, next) => vehicleController.getVehicles(req, res, next));
+router.post("/vehicles", (req, res, next) => vehicleController.createVehicle(req, res, next));
+router.put("/vehicles/:id", (req, res, next) => vehicleController.updateVehicle(req, res, next));
+router.delete("/vehicles/:id", (req, res, next) => vehicleController.deleteVehicle(req, res, next));
 
 export default router;

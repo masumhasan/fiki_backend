@@ -9,6 +9,7 @@ export interface IDriverApplication extends Document {
   positionType: "AMBULATORY" | "WHEELCHAIR" | "STRETCHER";
   backgroundStatus: "CLEARED" | "PENDING" | "FAILED";
   status: "PENDING_REVIEW" | "INTERVIEW_SCHEDULED" | "APPROVED" | "REJECTED";
+  assignedVehicleId?: Schema.Types.ObjectId;
   submittedDate: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -36,6 +37,7 @@ const driverApplicationSchema = new Schema<IDriverApplication>(
       enum: ["PENDING_REVIEW", "INTERVIEW_SCHEDULED", "APPROVED", "REJECTED"],
       default: "PENDING_REVIEW",
     },
+    assignedVehicleId: { type: Schema.Types.ObjectId, ref: "Vehicle" },
     submittedDate: { type: Date, default: Date.now },
   },
   { timestamps: true }

@@ -1,7 +1,11 @@
 import { NextFunction, Request, Response } from "express";
+import mongoose from "mongoose";
 import { z } from "zod";
 import { VehicleReport } from "../models/VehicleReport.js";
 import { DriverApplication } from "../models/DriverApplication.js";
+import { User } from "../models/User.js";
+import { DriverProfile } from "../models/DriverProfile.js";
+import { Vehicle } from "../models/Vehicle.js";
 
 const vehicleReportSchema = z.object({
   vehicleId: z.string().min(1, "Vehicle ID is required"),
@@ -141,6 +145,91 @@ export class FleetController {
       res.status(200).json({
         success: true,
         data: app,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async approveDriverApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const rawId = req.params.id;
+      const id = Array.isArray(rawId) ? rawId[0] : rawId;
+      const { vehicleId } = req.body;
+
+      let app = null;
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        app = await DriverApplication.findById(id);
+      }
+      if (!app) {
+        app = await DriverApplication.findOne({ applicationId: id });
+      }
+
+      if (!app) {
+        res.status(404).json({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Driver application not found" },
+        });
+        return;
+      }
+
+      let selectedVehicle = null;
+      if (vehicleId) {
+        selectedVehicle = await Vehicle.findById(vehicleId);
+      }
+
+      // Update application status
+      app.status = "APPROVED";
+      if (selectedVehicle) {
+        app.assignedVehicleId = selectedVehicle._id as any;
+      }
+      await app.save();
+
+      // Find or create User with role DRIVER
+      let driverUser = await User.findOne({ email: app.email.toLowerCase() });
+      if (!driverUser) {
+        driverUser = await User.create({
+          email: app.email.toLowerCase(),
+          passwordHash: "$2a$12$eImiTXuWVxfM37uY4JANjO5E/8051Ew.", // default Test@123
+          role: "DRIVER",
+          name: app.fullName,
+          phone: app.phone,
+          accountStatus: "ACTIVE",
+        });
+      }
+
+      // Find or create DriverProfile
+      let profile = await DriverProfile.findOne({ userId: driverUser._id });
+      if (!profile) {
+        profile = new DriverProfile({
+          userId: driverUser._id,
+          licenseNumber: app.licenseNumber,
+          approvalStatus: "APPROVED",
+          availabilityStatus: "ONLINE",
+        });
+      }
+
+      if (selectedVehicle) {
+        profile.vehicle = {
+          model: selectedVehicle.modelName,
+          year: selectedVehicle.year,
+          licensePlate: selectedVehicle.licensePlate,
+        };
+        selectedVehicle.assignedDriverId = driverUser._id as any;
+        await selectedVehicle.save();
+      }
+
+      profile.approvalStatus = "APPROVED";
+      await profile.save();
+
+      res.status(200).json({
+        success: true,
+        data: {
+          application: app,
+          driverProfile: profile,
+          driverId: profile._id,
+          userId: driverUser._id,
+        },
       });
     } catch (error) {
       next(error);

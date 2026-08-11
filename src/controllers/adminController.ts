@@ -307,6 +307,32 @@ export class AdminController {
       next(error);
     }
   }
+
+  async deleteDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid driver ID format" } });
+        return;
+      }
+
+      const driverUser = await User.findOne({ _id: id, role: "DRIVER" });
+      if (!driverUser) {
+        res.status(404).json({ success: false, error: { code: "DRIVER_NOT_FOUND", message: "Driver not found" } });
+        return;
+      }
+
+      await User.findByIdAndDelete(id);
+      await DriverProfile.deleteMany({ userId: id });
+
+      res.status(200).json({
+        success: true,
+        message: "Driver deleted successfully",
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const adminController = new AdminController();
