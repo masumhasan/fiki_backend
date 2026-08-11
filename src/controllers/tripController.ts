@@ -1,5 +1,7 @@
+import mongoose from "mongoose";
 import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
+import { AuditLog } from "../models/AuditLog.js";
 import { Trip } from "../models/Trip.js";
 
 const createRideSchema = z.object({
@@ -7,6 +9,17 @@ const createRideSchema = z.object({
   dropoffAddress: z.string().min(1, "Dropoff address is required"),
   fare: z.number().positive().optional(),
 });
+
+const respondToQuoteSchema = z.object({
+  action: z.enum(["ACCEPT", "DENY", "COUNTER"], {
+    errorMap: () => ({ message: "Action must be ACCEPT, DENY, or COUNTER" }),
+  }),
+  counterOffer: z.number().positive("Counter offer must be a positive number").optional(),
+  note: z.string().max(500).optional(),
+}).refine(
+  (data) => data.action !== "COUNTER" || (data.counterOffer !== undefined),
+  { message: "counterOffer is required when action is COUNTER", path: ["counterOffer"] }
+);
 
 export class TripController {
   async requestTrip(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -106,6 +119,87 @@ export class TripController {
       res.status(200).json({
         success: true,
         data: trip,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async respondToQuote(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const parsed = respondToQuoteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: { code: "VALIDATION_FAILED", message: "Invalid quote response", details: parsed.error.flatten().fieldErrors },
+        });
+        return;
+      }
+
+      const trip = await Trip.findOne({ _id: id, passengerId: req.user.userId });
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      if (trip.status !== "QUOTE_SENT") {
+        res.status(409).json({
+          success: false,
+          error: { code: "INVALID_TRIP_STATE", message: `Cannot respond to a quote when trip status is '${trip.status}'` },
+        });
+        return;
+      }
+
+      const { action, counterOffer, note } = parsed.data;
+      const previousStatus = trip.status;
+
+      if (action === "ACCEPT") {
+        trip.status = "QUOTE_ACCEPTED";
+        trip.fare = trip.quotedFare;
+      } else if (action === "DENY") {
+        trip.status = "QUOTE_DENIED";
+        trip.cancelledAt = new Date();
+        trip.cancellationReason = note || "Passenger declined quote";
+      } else {
+        trip.status = "QUOTE_COUNTERED";
+        trip.counterOffer = counterOffer;
+        trip.counterOfferedAt = new Date();
+        trip.counterOfferNote = note;
+      }
+
+      await trip.save();
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user.userId),
+        actorRole: req.user.role,
+        action: `PASSENGER_${action}ED_QUOTE`,
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        previousState: { status: previousStatus },
+        newState: { status: trip.status, counterOffer: trip.counterOffer },
+        requestId: req.requestId,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          id: trip._id.toString(),
+          status: trip.status,
+          quotedFare: trip.quotedFare,
+          counterOffer: trip.counterOffer,
+          fare: trip.fare,
+        },
       });
     } catch (error) {
       next(error);

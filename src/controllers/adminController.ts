@@ -22,6 +22,17 @@ const assignDriverSchema = z.object({
   driverId: z.string().min(1, "Driver ID is required"),
 });
 
+const sendQuoteSchema = z.object({
+  quotedFare: z.number().positive("Quoted fare must be a positive number"),
+  quoteNote: z.string().max(500).optional(),
+});
+
+const respondToCounterOfferSchema = z.object({
+  action: z.enum(["ACCEPT", "DECLINE"], {
+    errorMap: () => ({ message: "Action must be ACCEPT or DECLINE" }),
+  }),
+});
+
 export class AdminController {
   async getDrivers(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -128,7 +139,6 @@ export class AdminController {
         await profile.save();
       }
 
-      // Record immutable audit log
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
         actorRole: req.user!.role,
@@ -263,6 +273,163 @@ export class AdminController {
         { userId: driver._id },
         { availabilityStatus: "ASSIGNED" }
       );
+
+      res.status(200).json({
+        success: true,
+        data: trip,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getTripById(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const trip = await Trip.findById(id)
+        .populate("passengerId", "name email phone")
+        .populate("driverId", "name email phone")
+        .lean();
+
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      res.status(200).json({ success: true, data: trip });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async sendQuote(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const parsed = sendQuoteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: { code: "VALIDATION_FAILED", message: "Invalid quote payload", details: parsed.error.flatten().fieldErrors },
+        });
+        return;
+      }
+
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      const allowedStatuses: string[] = ["REQUESTED", "QUOTE_COUNTERED"];
+      if (!allowedStatuses.includes(trip.status)) {
+        res.status(409).json({
+          success: false,
+          error: { code: "INVALID_TRIP_STATE", message: `Cannot send a quote when trip status is '${trip.status}'` },
+        });
+        return;
+      }
+
+      const previousStatus = trip.status;
+      trip.quotedFare = parsed.data.quotedFare;
+      trip.quotedAt = new Date();
+      trip.quoteNote = parsed.data.quoteNote;
+      trip.status = "QUOTE_SENT";
+      await trip.save();
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_SENT_QUOTE",
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        previousState: { status: previousStatus },
+        newState: { status: trip.status, quotedFare: trip.quotedFare },
+        requestId: req.requestId,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          id: trip._id.toString(),
+          status: trip.status,
+          quotedFare: trip.quotedFare,
+          quotedAt: trip.quotedAt,
+          quoteNote: trip.quoteNote,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async respondToCounterOffer(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const parsed = respondToCounterOfferSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: { code: "VALIDATION_FAILED", message: "Invalid action", details: parsed.error.flatten().fieldErrors },
+        });
+        return;
+      }
+
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      if (trip.status !== "QUOTE_COUNTERED") {
+        res.status(409).json({
+          success: false,
+          error: { code: "INVALID_TRIP_STATE", message: `Trip is not in QUOTE_COUNTERED status` },
+        });
+        return;
+      }
+
+      const previousStatus = trip.status;
+      const { action } = parsed.data;
+
+      if (action === "ACCEPT") {
+        trip.status = "QUOTE_ACCEPTED";
+        if (trip.counterOffer) {
+          trip.fare = trip.counterOffer;
+          trip.quotedFare = trip.counterOffer;
+        }
+      } else {
+        trip.status = "QUOTE_DENIED";
+        trip.cancelledAt = new Date();
+        trip.cancellationReason = "Admin declined counter offer";
+      }
+
+      await trip.save();
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: `ADMIN_${action}ED_COUNTER_OFFER`,
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        previousState: { status: previousStatus },
+        newState: { status: trip.status, fare: trip.fare },
+        requestId: req.requestId,
+      });
 
       res.status(200).json({
         success: true,
