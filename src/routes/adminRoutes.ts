@@ -10,6 +10,7 @@ const router = Router();
 router.use(authenticate, authorize("ADMIN"));
 
 router.get("/drivers", (req, res, next) => adminController.getDrivers(req, res, next));
+router.get("/drivers/:id", (req, res, next) => adminController.getDriverById(req, res, next));
 router.patch("/drivers/:id/status", (req, res, next) => adminController.updateDriverStatus(req, res, next));
 router.delete("/drivers/:id", (req, res, next) => adminController.deleteDriver(req, res, next));
 

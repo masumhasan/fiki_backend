@@ -34,6 +34,71 @@ const respondToCounterOfferSchema = z.object({
 });
 
 export class AdminController {
+  async getDriverById(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid driver ID format" } });
+        return;
+      }
+
+      const user = await User.findOne({ _id: id, role: "DRIVER", deletedAt: null }).lean();
+      if (!user) {
+        res.status(404).json({ success: false, error: { code: "DRIVER_NOT_FOUND", message: "Driver not found" } });
+        return;
+      }
+
+      const profile = await DriverProfile.findOne({ userId: user._id }).lean();
+
+      const trips = await Trip.find({ driverId: user._id })
+        .populate("passengerId", "name")
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .lean();
+
+      const completedTrips = trips.filter((t) => t.status === "COMPLETED");
+      const totalFare = completedTrips.reduce((sum, t) => sum + (t.fare || 0), 0);
+
+      res.status(200).json({
+        success: true,
+        data: {
+          id: user._id.toString(),
+          name: user.name,
+          email: user.email,
+          phone: user.phone || null,
+          accountStatus: user.accountStatus,
+          createdAt: user.createdAt,
+          profile: profile
+            ? {
+                licenseNumber: profile.licenseNumber || null,
+                vehicle: profile.vehicle || null,
+                approvalStatus: profile.approvalStatus,
+                availabilityStatus: profile.availabilityStatus,
+                rating: profile.rating ?? null,
+                completedTripsCount: profile.completedTripsCount,
+              }
+            : null,
+          trips: trips.map((t) => ({
+            _id: t._id.toString(),
+            status: t.status,
+            fare: t.fare ?? null,
+            pickup: t.pickupLocation?.address || null,
+            dropoff: t.dropoffLocation?.address || null,
+            passengerName: (t.passengerId as any)?.name || null,
+            createdAt: t.createdAt,
+          })),
+          stats: {
+            completedTrips: completedTrips.length,
+            totalTrips: trips.length,
+            totalFare,
+          },
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getDrivers(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
