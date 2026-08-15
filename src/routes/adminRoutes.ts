@@ -25,6 +25,7 @@ router.get("/analytics", (req, res, next) => adminController.getAnalytics(req, r
 router.get("/vehicle-reports", (req, res, next) => fleetController.getVehicleReports(req, res, next));
 router.post("/vehicle-reports", (req, res, next) => fleetController.createVehicleReport(req, res, next));
 router.get("/driver-applications", (req, res, next) => fleetController.getDriverApplications(req, res, next));
+router.get("/driver-applications/:id", (req, res, next) => fleetController.getDriverApplicationById(req, res, next));
 router.patch("/driver-applications/:id/status", (req, res, next) => fleetController.updateDriverApplicationStatus(req, res, next));
 router.post("/driver-applications/:id/approve", (req, res, next) => fleetController.approveDriverApplication(req, res, next));
 

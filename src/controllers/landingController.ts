@@ -1,10 +1,63 @@
 import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
+import { DriverApplication } from "../models/DriverApplication.js";
 
 const estimateBodySchema = z.object({
   pickupAddress: z.string().min(1, "Pickup address is required"),
   dropoffAddress: z.string().min(1, "Dropoff address is required"),
   mobilityType: z.enum(["STANDARD", "WHEELCHAIR", "STRETCHER"]).default("STANDARD"),
+});
+
+const jobApplicationSchema = z.object({
+  fullName: z.string().min(1, "Full name is required"),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  email: z.string().email("Valid email address is required"),
+  phone: z.string().min(1, "Phone number is required"),
+  licenseNumber: z.string().min(1, "Driver license number is required"),
+  positionType: z.enum(["AMBULATORY", "WHEELCHAIR", "STRETCHER"]).default("AMBULATORY"),
+
+  streetAddress: z.string().optional(),
+  streetAddress2: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  zipCode: z.string().optional(),
+  country: z.string().optional(),
+
+  position: z.string().optional(),
+  availableStartDate: z.string().optional(),
+  employmentStatus: z.string().optional(),
+  desiredSalary: z.string().optional(),
+  howDidYouHear: z.string().optional(),
+
+  authorizedInUS: z.string().optional(),
+  felonyConviction: z.string().optional(),
+  felonyExplanation: z.string().optional(),
+
+  highSchool: z.string().optional(),
+  highSchoolGraduated: z.string().optional(),
+  college: z.string().optional(),
+  collegeGraduated: z.string().optional(),
+  degree: z.string().optional(),
+
+  previousEmployer: z.string().optional(),
+  jobTitle: z.string().optional(),
+  startingSalary: z.string().optional(),
+  endingSalary: z.string().optional(),
+  responsibilities: z.string().optional(),
+  employmentFromDate: z.string().optional(),
+  employmentToDate: z.string().optional(),
+  reasonForLeaving: z.string().optional(),
+
+  referenceName: z.string().optional(),
+  referenceRelationship: z.string().optional(),
+  referencePhone: z.string().optional(),
+
+  driverCategory: z.string().optional(),
+  licenseExpirationDate: z.string().optional(),
+  socialSecurityNumber: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  signature: z.string().optional(),
 });
 
 export class LandingController {
@@ -52,6 +105,43 @@ export class LandingController {
           estimatedFare: calculatedFare,
           currency: "USD",
         },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async submitJobApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const parsedBody = jobApplicationSchema.safeParse(req.body);
+
+      if (!parsedBody.success) {
+        res.status(422).json({
+          success: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Invalid job application payload format",
+            details: parsedBody.error.flatten().fieldErrors,
+          },
+        });
+        return;
+      }
+
+      const payload = parsedBody.data;
+      const applicationId = `APP-2026-${Math.floor(100 + Math.random() * 900)}`;
+
+      const application = await DriverApplication.create({
+        ...payload,
+        applicationId,
+        email: payload.email.toLowerCase(),
+        backgroundStatus: "CLEARED",
+        status: "PENDING_REVIEW",
+        submittedDate: new Date(),
+      });
+
+      res.status(201).json({
+        success: true,
+        data: application,
       });
     } catch (error) {
       next(error);

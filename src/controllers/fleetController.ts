@@ -115,6 +115,36 @@ export class FleetController {
     }
   }
 
+  async getDriverApplicationById(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const rawId = req.params.id;
+      const id = Array.isArray(rawId) ? rawId[0] : rawId;
+
+      let app = null;
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        app = await DriverApplication.findById(id);
+      }
+      if (!app) {
+        app = await DriverApplication.findOne({ applicationId: id });
+      }
+
+      if (!app) {
+        res.status(404).json({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Driver application not found" },
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: app,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async updateDriverApplicationStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { id } = req.params;
@@ -227,8 +257,8 @@ export class FleetController {
         data: {
           application: app,
           driverProfile: profile,
-          driverId: profile._id,
-          userId: driverUser._id,
+          driverId: driverUser._id.toString(),
+          userId: driverUser._id.toString(),
         },
       });
     } catch (error) {

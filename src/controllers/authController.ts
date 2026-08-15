@@ -12,6 +12,7 @@ const registerBodySchema = z.object({
   email: z.string().email("Invalid email address format"),
   password: z.string().min(6, "Password must be at least 6 characters"),
   phone: z.string().optional(),
+  role: z.enum(["USER", "DRIVER"]).optional().default("USER"),
 });
 
 export class AuthController {
@@ -31,8 +32,8 @@ export class AuthController {
         return;
       }
 
-      const { name, email, password, phone } = parsedBody.data;
-      const result = await authService.register(name, email, password, phone);
+      const { name, email, password, phone, role } = parsedBody.data;
+      const result = await authService.register(name, email, password, phone, role as any);
 
       res.status(201).json({
         success: true,

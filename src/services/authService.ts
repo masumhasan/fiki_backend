@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env.js";
 import { IUser, UserRole } from "../models/User.js";
+import { DriverProfile } from "../models/DriverProfile.js";
 import { userRepository } from "../repositories/userRepository.js";
 
 export interface TokenPayload {
@@ -62,7 +63,7 @@ export class AuthService {
     };
   }
 
-  async register(name: string, email: string, password: string, phone?: string): Promise<AuthResult> {
+  async register(name: string, email: string, password: string, phone?: string, role: UserRole = "USER"): Promise<AuthResult> {
     const existing = await userRepository.findByEmail(email);
     if (existing) {
       throw { statusCode: 409, code: "EMAIL_ALREADY_EXISTS", message: "An account with this email address already exists" };
@@ -73,10 +74,18 @@ export class AuthService {
       name,
       email,
       passwordHash,
-      role: "USER",
+      role,
       phone,
       accountStatus: "ACTIVE",
     });
+
+    if (role === "DRIVER") {
+      await DriverProfile.create({
+        userId: user._id,
+        approvalStatus: "PENDING",
+        availabilityStatus: "OFFLINE",
+      });
+    }
 
     const payload: TokenPayload = {
       userId: user._id.toString(),
