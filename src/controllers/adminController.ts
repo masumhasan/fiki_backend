@@ -77,6 +77,7 @@ export class AdminController {
                 rating: profile.rating ?? null,
                 completedTripsCount: profile.completedTripsCount,
                 weeklySchedule: profile.weeklySchedule || null,
+                oneTimeChanges: profile.oneTimeChanges || [],
               }
             : null,
           trips: trips.map((t) => ({
@@ -145,6 +146,7 @@ export class AdminController {
                 rating: p.rating,
                 completedTripsCount: p.completedTripsCount,
                 weeklySchedule: p.weeklySchedule || null,
+                oneTimeChanges: p.oneTimeChanges || [],
               }
             : null,
         };
@@ -603,6 +605,59 @@ export class AdminController {
         data: {
           id: id,
           weeklySchedule: profile.weeklySchedule,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async addOneTimeChange(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid driver ID format" } });
+        return;
+      }
+
+      const { date, working, startTime, endTime, reason } = req.body;
+      if (!date) {
+        res.status(422).json({ success: false, error: { code: "VALIDATION_FAILED", message: "date is required" } });
+        return;
+      }
+
+      const parsedDate = new Date(date);
+      if (isNaN(parsedDate.getTime())) {
+        res.status(422).json({ success: false, error: { code: "VALIDATION_FAILED", message: "invalid date format" } });
+        return;
+      }
+
+      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(id) });
+      if (!profile) {
+        res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
+        return;
+      }
+
+      const cleanChanges = (profile.oneTimeChanges || []).filter(
+        (c: any) => new Date(c.date).toDateString() !== parsedDate.toDateString()
+      );
+
+      cleanChanges.push({
+        date: parsedDate,
+        working,
+        startTime: working ? startTime : undefined,
+        endTime: working ? endTime : undefined,
+        reason,
+      });
+
+      profile.oneTimeChanges = cleanChanges;
+      await profile.save();
+
+      res.status(200).json({
+        success: true,
+        data: {
+          id,
+          oneTimeChanges: profile.oneTimeChanges,
         },
       });
     } catch (error) {

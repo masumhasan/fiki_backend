@@ -10,6 +10,14 @@ export interface IDaySchedule {
   endTime?: string;
 }
 
+export interface IOneTimeChange {
+  date: Date;
+  working: boolean;
+  startTime?: string;
+  endTime?: string;
+  reason?: string;
+}
+
 export interface IDriverProfile extends Document {
   userId: mongoose.Types.ObjectId;
   licenseNumber?: string;
@@ -30,9 +38,21 @@ export interface IDriverProfile extends Document {
   rating?: number;
   completedTripsCount: number;
   weeklySchedule: IDaySchedule[];
+  oneTimeChanges: IOneTimeChange[];
   createdAt: Date;
   updatedAt: Date;
 }
+
+const oneTimeChangeSchema = new Schema<IOneTimeChange>(
+  {
+    date: { type: Date, required: true },
+    working: { type: Boolean, required: true },
+    startTime: { type: String },
+    endTime: { type: String },
+    reason: { type: String },
+  },
+  { _id: false }
+);
 
 const dayScheduleSchema = new Schema<IDaySchedule>(
   {
@@ -72,6 +92,10 @@ const driverProfileSchema = new Schema<IDriverProfile>(
         { day: "Sat", working: false },
         { day: "Sun", working: false },
       ],
+    },
+    oneTimeChanges: {
+      type: [oneTimeChangeSchema],
+      default: [],
     },
     approvalStatus: {
       type: String,
