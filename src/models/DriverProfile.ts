@@ -3,6 +3,13 @@ import mongoose, { Document, Schema } from "mongoose";
 export type DriverApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 export type DriverAvailabilityStatus = "OFFLINE" | "ONLINE" | "ASSIGNED" | "UNAVAILABLE";
 
+export interface IDaySchedule {
+  day: "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
+  working: boolean;
+  startTime?: string;
+  endTime?: string;
+}
+
 export interface IDriverProfile extends Document {
   userId: mongoose.Types.ObjectId;
   licenseNumber?: string;
@@ -22,9 +29,20 @@ export interface IDriverProfile extends Document {
   };
   rating?: number;
   completedTripsCount: number;
+  weeklySchedule: IDaySchedule[];
   createdAt: Date;
   updatedAt: Date;
 }
+
+const dayScheduleSchema = new Schema<IDaySchedule>(
+  {
+    day: { type: String, enum: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], required: true },
+    working: { type: Boolean, required: true },
+    startTime: { type: String },
+    endTime: { type: String },
+  },
+  { _id: false }
+);
 
 const driverProfileSchema = new Schema<IDriverProfile>(
   {
@@ -42,6 +60,18 @@ const driverProfileSchema = new Schema<IDriverProfile>(
       year: { type: Number },
       color: { type: String, trim: true },
       licensePlate: { type: String, trim: true },
+    },
+    weeklySchedule: {
+      type: [dayScheduleSchema],
+      default: [
+        { day: "Mon", working: true, startTime: "08:00 AM", endTime: "04:00 PM" },
+        { day: "Tue", working: true, startTime: "08:00 AM", endTime: "04:00 PM" },
+        { day: "Wed", working: true, startTime: "08:00 AM", endTime: "04:00 PM" },
+        { day: "Thu", working: true, startTime: "08:00 AM", endTime: "04:00 PM" },
+        { day: "Fri", working: true, startTime: "08:00 AM", endTime: "04:00 PM" },
+        { day: "Sat", working: false },
+        { day: "Sun", working: false },
+      ],
     },
     approvalStatus: {
       type: String,

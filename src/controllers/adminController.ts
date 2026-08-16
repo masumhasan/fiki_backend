@@ -76,6 +76,7 @@ export class AdminController {
                 availabilityStatus: profile.availabilityStatus,
                 rating: profile.rating ?? null,
                 completedTripsCount: profile.completedTripsCount,
+                weeklySchedule: profile.weeklySchedule || null,
               }
             : null,
           trips: trips.map((t) => ({
@@ -143,6 +144,7 @@ export class AdminController {
                 vehicle: p.vehicle,
                 rating: p.rating,
                 completedTripsCount: p.completedTripsCount,
+                weeklySchedule: p.weeklySchedule || null,
               }
             : null,
         };
@@ -565,6 +567,43 @@ export class AdminController {
       res.status(200).json({
         success: true,
         message: "Driver deleted successfully",
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateDriverSchedule(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid driver ID format" } });
+        return;
+      }
+
+      const { weeklySchedule } = req.body;
+      if (!Array.isArray(weeklySchedule)) {
+        res.status(422).json({ success: false, error: { code: "VALIDATION_FAILED", message: "weeklySchedule must be an array" } });
+        return;
+      }
+
+      const profile = await DriverProfile.findOneAndUpdate(
+        { userId: new mongoose.Types.ObjectId(id) },
+        { weeklySchedule },
+        { new: true }
+      );
+
+      if (!profile) {
+        res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: {
+          id: id,
+          weeklySchedule: profile.weeklySchedule,
+        },
       });
     } catch (error) {
       next(error);
