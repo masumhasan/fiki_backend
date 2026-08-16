@@ -339,9 +339,14 @@ export class AdminController {
         { availabilityStatus: "ASSIGNED" }
       );
 
+      const populatedTrip = await Trip.findById(trip._id)
+        .populate("passengerId", "name email phone")
+        .populate("driverId", "name email phone")
+        .lean();
+
       res.status(200).json({
         success: true,
-        data: trip,
+        data: populatedTrip,
       });
     } catch (error) {
       next(error);
