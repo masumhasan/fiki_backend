@@ -557,6 +557,74 @@ export class AdminController {
         });
       }
 
+      // --- Monthly (Last 28 Days) ---
+      const twentyEightDaysAgo = new Date();
+      twentyEightDaysAgo.setDate(twentyEightDaysAgo.getDate() - 27);
+      twentyEightDaysAgo.setHours(0, 0, 0, 0);
+
+      const monthlyTripsAgg = await Trip.aggregate([
+        { $match: { createdAt: { $gte: twentyEightDaysAgo } } },
+        {
+          $group: {
+            _id: {
+              $subtract: [
+                { $floor: { $divide: [{ $subtract: ["$createdAt", twentyEightDaysAgo] }, 1000 * 60 * 60 * 24 * 7] } },
+                0
+              ]
+            },
+            total: { $sum: 1 },
+            completed: {
+              $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] }
+            }
+          }
+        }
+      ]);
+      const monthlyTripVolume = [
+        { date: "Week 1", total: 0, completed: 0 },
+        { date: "Week 2", total: 0, completed: 0 },
+        { date: "Week 3", total: 0, completed: 0 },
+        { date: "Week 4", total: 0, completed: 0 },
+      ];
+      monthlyTripsAgg.forEach(w => {
+        if (w._id >= 0 && w._id < 4) {
+          monthlyTripVolume[w._id].total = w.total;
+          monthlyTripVolume[w._id].completed = w.completed;
+        }
+      });
+
+      // --- Yearly (Last 12 Months) ---
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 11);
+      twelveMonthsAgo.setDate(1);
+      twelveMonthsAgo.setHours(0, 0, 0, 0);
+
+      const yearlyTripsAgg = await Trip.aggregate([
+        { $match: { createdAt: { $gte: twelveMonthsAgo } } },
+        {
+          $group: {
+            _id: { $month: "$createdAt" }, // 1-12
+            total: { $sum: 1 },
+            completed: {
+              $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] }
+            }
+          }
+        }
+      ]);
+      
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const yearlyTripVolume = [];
+      for (let i = 0; i < 12; i++) {
+        const d = new Date(twelveMonthsAgo);
+        d.setMonth(d.getMonth() + i);
+        const m = d.getMonth() + 1;
+        const found = yearlyTripsAgg.find(y => y._id === m);
+        yearlyTripVolume.push({
+          date: monthNames[m - 1],
+          total: found?.total || 0,
+          completed: found?.completed || 0,
+        });
+      }
+
       // Fetch active drivers
       const activeProfiles = await DriverProfile.find({ availabilityStatus: { $in: ["ONLINE", "ON_TRIP", "ASSIGNED"] } })
         .populate("userId", "name")
@@ -659,6 +727,8 @@ export class AdminController {
             completedTrips: completedTripsCount,
           },
           weeklyTripVolume,
+          monthlyTripVolume,
+          yearlyTripVolume,
           driverStatus,
           activityFeed,
           recentRideRequests,
