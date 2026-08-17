@@ -516,32 +516,128 @@ export class AdminController {
 
   async getAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const totalDrivers = await User.countDocuments({ role: "DRIVER", deletedAt: null });
-      const activeDrivers = await User.countDocuments({ role: "DRIVER", accountStatus: "ACTIVE", deletedAt: null });
-      const onlineDrivers = await DriverProfile.countDocuments({ availabilityStatus: "ONLINE" });
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
 
-      const totalTrips = await Trip.countDocuments();
-      const completedTrips = await Trip.countDocuments({ status: "COMPLETED" });
-      const pendingTrips = await Trip.countDocuments({ status: "REQUESTED" });
+      const todayTrips = await Trip.countDocuments({ createdAt: { $gte: todayStart } });
+      const pendingRequests = await Trip.countDocuments({ status: { $in: ["REQUESTED", "QUOTE_COUNTERED"] } });
+      const activeDriversCount = await DriverProfile.countDocuments({ availabilityStatus: { $in: ["ONLINE", "ON_TRIP", "ASSIGNED"] } });
+      const completedTripsCount = await Trip.countDocuments({ status: "COMPLETED" });
 
-      const completedFares = await Trip.aggregate([
-        { $match: { status: "COMPLETED" } },
-        { $group: { _id: null, totalRevenue: { $sum: "$fare" } } },
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      sevenDaysAgo.setHours(0, 0, 0, 0);
+
+      const weeklyTripsAgg = await Trip.aggregate([
+        { $match: { createdAt: { $gte: sevenDaysAgo } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            total: { $sum: 1 },
+            completed: {
+              $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] }
+            }
+          }
+        },
+        { $sort: { _id: 1 } }
       ]);
 
-      const totalRevenue = completedFares[0]?.totalRevenue || 0;
+      const weeklyMap = new Map(weeklyTripsAgg.map((w: any) => [w._id, { total: w.total, completed: w.completed }]));
+      const weeklyTripVolume = [];
+      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(sevenDaysAgo);
+        d.setDate(d.getDate() + i);
+        const dateStr = d.toISOString().split("T")[0];
+        weeklyTripVolume.push({
+          date: days[d.getDay()],
+          total: weeklyMap.get(dateStr)?.total || 0,
+          completed: weeklyMap.get(dateStr)?.completed || 0,
+        });
+      }
+
+      // Fetch active drivers
+      const activeProfiles = await DriverProfile.find({ availabilityStatus: { $in: ["ONLINE", "ON_TRIP", "ASSIGNED"] } })
+        .populate("userId", "name")
+        .limit(5)
+        .lean();
+        
+      const colors = ["#082552", "#7439ed", "#2665e7", "#dc2626", "#0794b5", "#10ac7b"];
+      const driverStatus = activeProfiles.map((p: any, idx: number) => ({
+        id: p.userId?._id,
+        name: p.userId?.name || "Unknown",
+        initials: p.userId?.name ? p.userId.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) : "DR",
+        vehicle: p.vehicle?.model ? p.vehicle.model : (typeof p.vehicle === 'string' ? p.vehicle : "Standard Vehicle"),
+        status: p.availabilityStatus === "ONLINE" ? "Active" : p.availabilityStatus === "ON_TRIP" ? "On Trip" : p.availabilityStatus === "ASSIGNED" ? "Assigned" : "Active",
+        color: colors[idx % colors.length],
+      }));
+
+      // Fetch Activity Feed (from recent trips)
+      const recentTrips = await Trip.find()
+        .populate("passengerId", "name")
+        .sort({ updatedAt: -1 })
+        .limit(6)
+        .lean();
+
+      const activityFeed = recentTrips.map((t: any) => {
+        const tripId = `T-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
+        const passengerName = t.passengerId?.name || "Unknown";
+        
+        let title = `Trip ${tripId} updated`;
+        let color = "#3b82f6";
+        
+        if (t.status === "COMPLETED") {
+           title = `Trip ${tripId} completed successfully`;
+           color = "#22c55e";
+        } else if (t.status === "REQUESTED") {
+           title = `New ride request from ${passengerName}`;
+           color = "#3b82f6";
+        } else if (t.status === "QUOTE_COUNTERED") {
+           title = `Trip ${tripId} counter-offered by passenger`;
+           color = "#f59e0b";
+        } else if (t.status === "CANCELLED" || t.status === "QUOTE_DENIED") {
+           title = `Trip ${tripId} was rejected or cancelled`;
+           color = "#ff5a5f";
+        } else if (t.status === "IN_PROGRESS" || t.status === "DRIVER_ARRIVING" || t.status === "DRIVER_ARRIVED") {
+           title = `Trip ${tripId} in progress`;
+           color = "#16345e";
+        } else if (t.status === "ACCEPTED" || t.status === "QUOTE_ACCEPTED") {
+           title = `Trip ${tripId} approved / driver assigned`;
+           color = "#8345ed";
+        }
+
+        const diffMs = Date.now() - new Date(t.updatedAt).getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        let timeAgo = `${diffMins} min ago`;
+        if (diffMins > 60) {
+          const diffHrs = Math.floor(diffMins / 60);
+          timeAgo = `${diffHrs}h ${diffMins % 60}m ago`;
+        }
+        if (diffMins > 1440) {
+          const diffDays = Math.floor(diffMins / 1440);
+          timeAgo = `${diffDays} days ago`;
+        }
+
+        return {
+          title,
+          time: timeAgo,
+          color,
+        };
+      });
 
       res.status(200).json({
         success: true,
         data: {
-          totalDrivers,
-          activeDrivers,
-          onlineDrivers,
-          totalTrips,
-          completedTrips,
-          pendingTrips,
-          totalRevenue,
-          currency: "USD",
+          metrics: {
+            todayTrips,
+            pendingRequests,
+            activeDrivers: activeDriversCount,
+            completedTrips: completedTripsCount,
+          },
+          weeklyTripVolume,
+          driverStatus,
+          activityFeed,
         },
       });
     } catch (error) {
