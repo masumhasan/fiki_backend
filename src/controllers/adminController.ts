@@ -523,6 +523,13 @@ export class AdminController {
       const pendingRequests = await Trip.countDocuments({ status: { $in: ["REQUESTED", "QUOTE_COUNTERED"] } });
       const activeDriversCount = await DriverProfile.countDocuments({ availabilityStatus: { $in: ["ONLINE", "ON_TRIP", "ASSIGNED"] } });
       const completedTripsCount = await Trip.countDocuments({ status: "COMPLETED" });
+      const totalTrips = await Trip.countDocuments();
+      const totalDrivers = await DriverProfile.countDocuments();
+      const revenueAgg = await Trip.aggregate([
+        { $match: { status: "COMPLETED" } },
+        { $group: { _id: null, totalRevenue: { $sum: "$fare" } } }
+      ]);
+      const totalRevenue = revenueAgg[0]?.totalRevenue || 0;
 
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
@@ -725,6 +732,9 @@ export class AdminController {
             pendingRequests,
             activeDrivers: activeDriversCount,
             completedTrips: completedTripsCount,
+            totalTrips,
+            totalDrivers,
+            totalRevenue,
           },
           weeklyTripVolume,
           monthlyTripVolume,
