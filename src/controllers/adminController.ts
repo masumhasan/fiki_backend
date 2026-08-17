@@ -648,6 +648,36 @@ export class AdminController {
         color: colors[idx % colors.length],
       }));
 
+      // --- Driver Performance ---
+      const getDriverPerf = async (days: number) => {
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        d.setHours(0, 0, 0, 0);
+        const agg = await Trip.aggregate([
+          { $match: { createdAt: { $gte: d }, status: "COMPLETED", driverId: { $ne: null } } },
+          { $group: { _id: "$driverId", trips: { $sum: 1 } } },
+          { $sort: { trips: -1 } },
+          { $limit: 5 },
+          { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "driver" } },
+          { $unwind: { path: "$driver", preserveNullAndEmptyArrays: true } }
+        ]);
+        return agg.map((p: any) => {
+          let shortName = "Unknown";
+          if (p.driver?.name) {
+            const parts = p.driver.name.split(" ");
+            shortName = `${parts[0]} ${parts[1] ? parts[1][0] + "." : ""}`;
+          }
+          return { name: shortName, trips: p.trips };
+        });
+      };
+
+      const [weeklyDriverPerf, fortnightlyDriverPerf, monthlyDriverPerf, yearlyDriverPerf] = await Promise.all([
+        getDriverPerf(7),
+        getDriverPerf(14),
+        getDriverPerf(30),
+        getDriverPerf(365)
+      ]);
+
       // Fetch Activity Feed (from recent trips)
       const recentTrips = await Trip.find()
         .populate("passengerId", "name")
@@ -742,6 +772,12 @@ export class AdminController {
           driverStatus,
           activityFeed,
           recentRideRequests,
+          driverPerformance: {
+            week: weeklyDriverPerf,
+            fortnight: fortnightlyDriverPerf,
+            month: monthlyDriverPerf,
+            year: yearlyDriverPerf
+          }
         },
       });
     } catch (error) {
