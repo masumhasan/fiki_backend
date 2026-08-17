@@ -644,7 +644,8 @@ export class AdminController {
           `${pickup} → ${dropoff}`,
           statusStr,
           t.createdAt ? new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently",
-          colors[idx % colors.length]
+          colors[idx % colors.length],
+          t._id.toString()
         ];
       });
 
