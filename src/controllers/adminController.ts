@@ -626,6 +626,28 @@ export class AdminController {
         };
       });
 
+      const recentRideRequests = recentTrips.slice(0, 4).map((t: any, idx: number) => {
+        const passengerName = t.passengerId?.name || "Passenger";
+        const initials = passengerName.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) || "PA";
+        const pickup = t.pickupLocation?.address || "Unknown Pickup";
+        const dropoff = t.dropoffLocation?.address || "Unknown Dropoff";
+        
+        let statusStr = "Pending";
+        if (t.status === "COMPLETED") statusStr = "Completed";
+        else if (t.status === "ACCEPTED" || t.status === "QUOTE_ACCEPTED") statusStr = "Approved";
+        else if (t.status === "REQUESTED") statusStr = "Need Driver";
+        else if (t.status === "IN_PROGRESS" || t.status === "DRIVER_ARRIVING" || t.status === "DRIVER_ARRIVED") statusStr = "Onboard";
+
+        return [
+          initials,
+          passengerName,
+          `${pickup} → ${dropoff}`,
+          statusStr,
+          t.createdAt ? new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently",
+          colors[idx % colors.length]
+        ];
+      });
+
       res.status(200).json({
         success: true,
         data: {
@@ -638,6 +660,7 @@ export class AdminController {
           weeklyTripVolume,
           driverStatus,
           activityFeed,
+          recentRideRequests,
         },
       });
     } catch (error) {
