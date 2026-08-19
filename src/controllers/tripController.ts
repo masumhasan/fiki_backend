@@ -5,8 +5,69 @@ import { AuditLog } from "../models/AuditLog.js";
 import { Trip } from "../models/Trip.js";
 
 const createRideSchema = z.object({
-  pickupAddress: z.string().min(1, "Pickup address is required"),
-  dropoffAddress: z.string().min(1, "Dropoff address is required"),
+  // Passenger Information
+  fullName: z.string().min(2, "Full name is required"),
+  dateOfBirth: z.string().min(1, "Date of birth is required"),
+  confirmDob: z.boolean(),
+  phoneNumber: z.string().min(10, "Valid phone number is required"),
+  email: z.string().email().optional().or(z.literal("")).or(z.null()),
+  streetAddress: z.string().min(5, "Street address is required"),
+  city: z.string().min(2, "City is required"),
+  state: z.string().min(2, "State is required"),
+  zipCode: z.string().min(5, "Zip code is required"),
+  emergencyContactName: z.string().min(2, "Emergency contact name is required"),
+  emergencyContactPhone: z.string().min(10, "Emergency contact phone is required"),
+  relationship: z.string().min(1, "Relationship is required"),
+
+  // Trip Information
+  tripType: z.enum(["one-way", "round-trip"]),
+  schedule: z.enum(["one-time", "recurring"]),
+  pickupAddress: z.string().min(5, "Pickup address is required"),
+  destinationAddress: z.string().min(5, "Destination address is required"),
+  pickupDate: z.string().min(1, "Pickup date is required"),
+  pickupTime: z.string().min(1, "Pickup time is required"),
+  appointmentTime: z.string().optional().or(z.null()),
+
+  // Recurring Transportation Details
+  recurringStartDate: z.string().optional().or(z.null()),
+  recurringEndDate: z.string().optional().or(z.null()),
+  recurringDays: z.array(z.string()).optional().or(z.null()),
+  recurringPickupTime: z.string().optional().or(z.null()),
+  recurringAppointmentTime: z.string().optional().or(z.null()),
+
+  // Return Trip Details (Round Trip)
+  returnPickupAddress: z.string().optional().or(z.null()),
+  returnDestinationAddress: z.string().optional().or(z.null()),
+  returnDate: z.string().optional().or(z.null()),
+  returnPickupTime: z.string().optional().or(z.null()),
+  driverNotes: z.string().optional().or(z.null()),
+
+  // Mobility & Special Needs
+  mobilityOptions: z.array(z.string()).optional().or(z.null()),
+  specialInstructions: z.string().optional().or(z.null()),
+  accessInformation: z.string().optional().or(z.null()),
+
+  // Insurance / Payment
+  insuranceName: z.string().optional().or(z.null()),
+  authNumber: z.string().optional().or(z.null()),
+  privatePay: z.boolean().default(false),
+
+  // Guardian Information
+  guardianName: z.string().optional().or(z.null()),
+  guardianPhone: z.string().optional().or(z.null()),
+  guardianEmail: z.string().email().optional().or(z.literal("")).or(z.null()),
+
+  // Consents & Agreements
+  consentPhoto: z.boolean(),
+  consentTransport: z.boolean(),
+  consentEsignature: z.boolean(),
+  consentHipaa: z.boolean(),
+
+  // Signature
+  signature: z.string().min(1, "Signature is required"),
+  signatureDate: z.string().min(1, "Date is required"),
+  printedName: z.string().min(2, "Printed name is required"),
+  relationshipToPassenger: z.string().optional().or(z.null()),
   fare: z.number().positive().optional(),
 });
 
@@ -38,14 +99,17 @@ export class TripController {
         return;
       }
 
-      const { pickupAddress, dropoffAddress, fare } = parsed.data;
+      const tripData = parsed.data;
+      const scheduledTime = tripData.pickupDate ? new Date(`${tripData.pickupDate}T${tripData.pickupTime || "09:00"}`) : undefined;
 
       const trip = await Trip.create({
         passengerId: req.user.userId,
-        pickupLocation: { address: pickupAddress },
-        dropoffLocation: { address: dropoffAddress },
-        fare: fare || 25.0,
+        pickupLocation: { address: tripData.pickupAddress },
+        dropoffLocation: { address: tripData.destinationAddress },
+        fare: tripData.fare || 25.0,
         status: "REQUESTED",
+        scheduledTime,
+        ...tripData,
       });
 
       res.status(201).json({

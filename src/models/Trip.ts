@@ -42,6 +42,64 @@ export interface ITrip extends Document {
   cancellationReason?: string;
   createdAt: Date;
   updatedAt: Date;
+
+  // Passenger Information
+  fullName?: string;
+  dateOfBirth?: string;
+  confirmDob?: boolean;
+  phoneNumber?: string;
+  email?: string;
+  streetAddress?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  relationship?: string;
+
+  // Trip Information
+  tripType?: string;
+  schedule?: string;
+  pickupDate?: string;
+  pickupTime?: string;
+  appointmentTime?: string;
+  recurringStartDate?: string;
+  recurringEndDate?: string;
+  recurringDays?: string[];
+  recurringPickupTime?: string;
+  recurringAppointmentTime?: string;
+  returnPickupAddress?: string;
+  returnDestinationAddress?: string;
+  returnDate?: string;
+  returnPickupTime?: string;
+  driverNotes?: string;
+
+  // Mobility & Special Needs
+  mobilityOptions?: string[];
+  specialInstructions?: string;
+  accessInformation?: string;
+
+  // Insurance / Payment
+  insuranceName?: string;
+  authNumber?: string;
+  privatePay?: boolean;
+
+  // Guardian Information
+  guardianName?: string;
+  guardianPhone?: string;
+  guardianEmail?: string;
+
+  // Consents & Agreements
+  consentPhoto?: boolean;
+  consentTransport?: boolean;
+  consentEsignature?: boolean;
+  consentHipaa?: boolean;
+
+  // Signature
+  signature?: string;
+  signatureDate?: string;
+  printedName?: string;
+  relationshipToPassenger?: string;
 }
 
 const tripSchema = new Schema<ITrip>(
@@ -96,6 +154,64 @@ const tripSchema = new Schema<ITrip>(
     completedAt: { type: Date },
     cancelledAt: { type: Date },
     cancellationReason: { type: String },
+
+    // Passenger Information
+    fullName: { type: String },
+    dateOfBirth: { type: String },
+    confirmDob: { type: Boolean },
+    phoneNumber: { type: String },
+    email: { type: String },
+    streetAddress: { type: String },
+    city: { type: String },
+    state: { type: String },
+    zipCode: { type: String },
+    emergencyContactName: { type: String },
+    emergencyContactPhone: { type: String },
+    relationship: { type: String },
+
+    // Trip Information
+    tripType: { type: String },
+    schedule: { type: String },
+    pickupDate: { type: String },
+    pickupTime: { type: String },
+    appointmentTime: { type: String },
+    recurringStartDate: { type: String },
+    recurringEndDate: { type: String },
+    recurringDays: { type: [String] },
+    recurringPickupTime: { type: String },
+    recurringAppointmentTime: { type: String },
+    returnPickupAddress: { type: String },
+    returnDestinationAddress: { type: String },
+    returnDate: { type: String },
+    returnPickupTime: { type: String },
+    driverNotes: { type: String },
+
+    // Mobility & Special Needs
+    mobilityOptions: { type: [String] },
+    specialInstructions: { type: String },
+    accessInformation: { type: String },
+
+    // Insurance / Payment
+    insuranceName: { type: String },
+    authNumber: { type: String },
+    privatePay: { type: Boolean },
+
+    // Guardian Information
+    guardianName: { type: String },
+    guardianPhone: { type: String },
+    guardianEmail: { type: String },
+
+    // Consents & Agreements
+    consentPhoto: { type: Boolean },
+    consentTransport: { type: Boolean },
+    consentEsignature: { type: Boolean },
+    consentHipaa: { type: Boolean },
+
+    // Signature
+    signature: { type: String },
+    signatureDate: { type: String },
+    printedName: { type: String },
+    relationshipToPassenger: { type: String },
   },
   {
     timestamps: true,
