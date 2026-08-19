@@ -303,6 +303,7 @@ export class AdminController {
     try {
       const parsed = createTripSchema.safeParse(req.body);
       if (!parsed.success) {
+        console.log("Validation error details in backend:", parsed.error.flatten().fieldErrors);
         res.status(422).json({
           success: false,
           error: { code: "VALIDATION_FAILED", message: "Invalid trip payload", details: parsed.error.flatten().fieldErrors },
