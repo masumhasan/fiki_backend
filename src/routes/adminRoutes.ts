@@ -24,6 +24,7 @@ router.patch("/trips/:id/quote", (req, res, next) => adminController.sendQuote(r
 router.post("/trips/:id/counter-response", (req, res, next) => adminController.respondToCounterOffer(req, res, next));
 
 router.get("/analytics", (req, res, next) => adminController.getAnalytics(req, res, next));
+router.put("/settings/dispatch-number", (req, res, next) => adminController.updateDispatchNumber(req, res, next));
 
 router.get("/vehicle-reports", (req, res, next) => fleetController.getVehicleReports(req, res, next));
 router.post("/vehicle-reports", (req, res, next) => fleetController.createVehicleReport(req, res, next));

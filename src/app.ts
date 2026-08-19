@@ -10,6 +10,7 @@ import driverRoutes from "./routes/driverRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
 import landingRoutes from "./routes/landingRoutes.js";
 import tripRoutes from "./routes/tripRoutes.js";
+import settingsRoutes from "./routes/settingsRoutes.js";
 
 const app: Express = express();
 
@@ -47,6 +48,7 @@ app.use("/api/v1/drivers", driverRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/trips", tripRoutes);
 app.use("/api/v1/landing", landingRoutes);
+app.use("/api/v1/settings", settingsRoutes);
 
 // 404 Handler for unmatched routes
 app.use((req, res) => {

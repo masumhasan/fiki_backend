@@ -5,6 +5,7 @@ import { AuditLog } from "../models/AuditLog.js";
 import { DriverProfile } from "../models/DriverProfile.js";
 import { Trip } from "../models/Trip.js";
 import { User } from "../models/User.js";
+import { Setting } from "../models/Setting.js";
 
 const updateDriverStatusSchema = z.object({
   approvalStatus: z.enum(["APPROVED", "REJECTED"]).optional(),
@@ -895,6 +896,29 @@ export class AdminController {
           id,
           oneTimeChanges: profile.oneTimeChanges,
         },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateDispatchNumber(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { dispatchNumber } = req.body;
+      if (!dispatchNumber) {
+        res.status(422).json({ success: false, error: { code: "VALIDATION_FAILED", message: "dispatchNumber is required" } });
+        return;
+      }
+
+      const setting = await Setting.findOneAndUpdate(
+        { key: "dispatchNumber" },
+        { value: dispatchNumber },
+        { new: true, upsert: true }
+      );
+
+      res.status(200).json({
+        success: true,
+        data: { dispatchNumber: setting.value },
       });
     } catch (error) {
       next(error);
