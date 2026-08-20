@@ -147,6 +147,29 @@ export class LandingController {
       next(error);
     }
   }
+
+  async getMyApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user || !req.user.email) {
+        res.status(401).json({
+          success: false,
+          error: { code: "UNAUTHENTICATED", message: "User not authenticated" },
+        });
+        return;
+      }
+
+      const application = await DriverApplication.findOne({
+        email: req.user.email.toLowerCase(),
+      }).populate("assignedVehicleId");
+
+      res.status(200).json({
+        success: true,
+        data: application || null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const landingController = new LandingController();
