@@ -62,6 +62,7 @@ export interface IDriverApplication extends Document {
   socialSecurityNumber?: string;
   dateOfBirth?: string;
   signature?: string;
+  bidForm?: string;
 
   createdAt: Date;
   updatedAt: Date;
@@ -135,6 +136,7 @@ const driverApplicationSchema = new Schema<IDriverApplication>(
     socialSecurityNumber: { type: String },
     dateOfBirth: { type: String },
     signature: { type: String },
+    bidForm: { type: String },
   },
   { timestamps: true }
 );

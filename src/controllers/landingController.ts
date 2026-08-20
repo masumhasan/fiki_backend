@@ -58,6 +58,7 @@ const jobApplicationSchema = z.object({
   socialSecurityNumber: z.string().optional(),
   dateOfBirth: z.string().optional(),
   signature: z.string().optional(),
+  bidForm: z.string().optional(),
 });
 
 export class LandingController {
