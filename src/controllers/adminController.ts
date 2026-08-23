@@ -179,16 +179,23 @@ export class AdminController {
         ];
       }
 
+      // If approvalStatus or availabilityStatus filter is specified, filter by DriverProfile first
+      const profileQuery: Record<string, unknown> = {};
+      if (approvalStatus) profileQuery.approvalStatus = approvalStatus;
+      if (availabilityStatus) profileQuery.availabilityStatus = availabilityStatus;
+
+      if (Object.keys(profileQuery).length > 0) {
+        const matchingProfiles = await DriverProfile.find(profileQuery).select("userId").lean();
+        const matchingUserIds = matchingProfiles.map((p) => p.userId);
+        userFilter._id = { $in: matchingUserIds };
+      }
+
       const driverUsers = await User.find(userFilter).skip(skip).limit(limit).lean();
       const totalDrivers = await User.countDocuments(userFilter);
 
       const userIds = driverUsers.map((u) => u._id);
 
-      const profileFilter: Record<string, unknown> = { userId: { $in: userIds } };
-      if (approvalStatus) profileFilter.approvalStatus = approvalStatus;
-      if (availabilityStatus) profileFilter.availabilityStatus = availabilityStatus;
-
-      const profiles = await DriverProfile.find(profileFilter).lean();
+      const profiles = await DriverProfile.find({ userId: { $in: userIds } }).lean();
       const profileMap = new Map(profiles.map((p) => [p.userId.toString(), p]));
 
       const drivers = driverUsers.map((u) => {
