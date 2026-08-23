@@ -2,8 +2,10 @@ import mongoose from "mongoose";
 import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { DriverAvailabilityStatus, DriverProfile } from "../models/DriverProfile.js";
+import { DriverShift } from "../models/DriverShift.js";
 import { Trip, TripStatus } from "../models/Trip.js";
 import { User } from "../models/User.js";
+
 
 
 const availabilitySchema = z.object({
@@ -362,7 +364,175 @@ export class DriverController {
       next(error);
     }
   }
+
+  async getTodayShift(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const todayStr = new Date().toISOString().split("T")[0];
+
+      // First check if there is an in-progress shift
+      let shift = await DriverShift.findOne({
+        driverId: req.user.userId,
+        status: "IN_PROGRESS",
+      }).sort({ startedAt: -1 }).lean();
+
+      // If no in-progress shift, find latest shift created today
+      if (!shift) {
+        shift = await DriverShift.findOne({
+          driverId: req.user.userId,
+          shiftDate: todayStr,
+        }).sort({ createdAt: -1 }).lean();
+      }
+
+      res.status(200).json({
+        success: true,
+        data: { shift: shift || null },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async startShift(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const { odometer, fuel = "half", condition = "clear", notes = "" } = req.body;
+      const rawOdometer = String(odometer || "").replace(/[^\d.]/g, "");
+      const numOdometer = parseFloat(rawOdometer);
+
+      if (isNaN(numOdometer) || numOdometer <= 0) {
+        res.status(400).json({
+          success: false,
+          error: { code: "INVALID_ODOMETER", message: "Valid starting odometer reading is required" },
+        });
+        return;
+      }
+
+      // Check if driver already has an in-progress shift
+      const existing = await DriverShift.findOne({
+        driverId: req.user.userId,
+        status: "IN_PROGRESS",
+      });
+
+      if (existing) {
+        res.status(400).json({
+          success: false,
+          error: { code: "SHIFT_IN_PROGRESS", message: "A shift is already currently in progress" },
+        });
+        return;
+      }
+
+      const profile = await DriverProfile.findOne({ userId: req.user.userId }).lean();
+      const todayStr = new Date().toISOString().split("T")[0];
+
+      const shift = await DriverShift.create({
+        driverId: req.user.userId,
+        shiftDate: todayStr,
+        status: "IN_PROGRESS",
+        startedAt: new Date(),
+        startingOdometer: numOdometer,
+        startFuel: fuel,
+        startCondition: condition,
+        startNotes: notes,
+        vehicleInfo: profile?.vehicle ? {
+          make: profile.vehicle.make,
+          model: profile.vehicle.model,
+          year: profile.vehicle.year,
+          licensePlate: profile.vehicle.licensePlate,
+        } : undefined,
+      });
+
+      // Mark driver availability as ONLINE
+      await DriverProfile.findOneAndUpdate(
+        { userId: req.user.userId },
+        { availabilityStatus: "ONLINE" }
+      );
+
+      res.status(201).json({
+        success: true,
+        data: shift,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async endShift(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const { odometer, fuel = "half", condition = "clear", notes = "" } = req.body;
+      const rawOdometer = String(odometer || "").replace(/[^\d.]/g, "");
+      const numOdometer = parseFloat(rawOdometer);
+
+      if (isNaN(numOdometer) || numOdometer <= 0) {
+        res.status(400).json({
+          success: false,
+          error: { code: "INVALID_ODOMETER", message: "Valid ending odometer reading is required" },
+        });
+        return;
+      }
+
+      const shift = await DriverShift.findOne({
+        driverId: req.user.userId,
+        status: "IN_PROGRESS",
+      });
+
+      if (!shift) {
+        res.status(404).json({
+          success: false,
+          error: { code: "NO_ACTIVE_SHIFT", message: "No active shift found to end" },
+        });
+        return;
+      }
+
+      const endedAt = new Date();
+      const diffMs = endedAt.getTime() - shift.startedAt.getTime();
+      const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      const totalHoursText = `${hours}h ${mins < 10 ? '0' : ''}${mins}m`;
+      const estimatedMiles = Math.max(0, parseFloat((numOdometer - shift.startingOdometer).toFixed(1)));
+
+      shift.status = "COMPLETED";
+      shift.endedAt = endedAt;
+      shift.endingOdometer = numOdometer;
+      shift.estimatedMiles = estimatedMiles;
+      shift.totalMinutes = totalMinutes;
+      shift.totalHoursText = totalHoursText;
+      shift.endFuel = fuel;
+      shift.endCondition = condition;
+      shift.endNotes = notes;
+
+      await shift.save();
+
+      // Mark driver availability as OFFLINE
+      await DriverProfile.findOneAndUpdate(
+        { userId: req.user.userId },
+        { availabilityStatus: "OFFLINE" }
+      );
+
+      res.status(200).json({
+        success: true,
+        data: shift,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const driverController = new DriverController();
+
 
