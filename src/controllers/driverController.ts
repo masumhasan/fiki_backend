@@ -1,8 +1,10 @@
+import mongoose from "mongoose";
 import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { DriverAvailabilityStatus, DriverProfile } from "../models/DriverProfile.js";
 import { Trip, TripStatus } from "../models/Trip.js";
 import { User } from "../models/User.js";
+
 
 const availabilitySchema = z.object({
   availabilityStatus: z.enum(["OFFLINE", "ONLINE", "UNAVAILABLE"], {
@@ -297,6 +299,70 @@ export class DriverController {
       next(error);
     }
   }
+
+  async getTripById(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const trip = await Trip.findOne({ _id: id, driverId: req.user.userId })
+        .populate("passengerId", "name email phone")
+        .lean();
+
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found or not assigned to driver" } });
+        return;
+      }
+
+      const profile = await DriverProfile.findOne({ userId: req.user.userId })
+        .select("vehicle rating availabilityStatus")
+        .lean();
+
+      res.status(200).json({
+        success: true,
+        data: {
+          ...trip,
+          driverProfile: profile,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateTripNotes(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const id = req.params.id as string;
+      const { driverNotes } = req.body;
+
+      const trip = await Trip.findOne({ _id: id, driverId: req.user.userId });
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found or not assigned to driver" } });
+        return;
+      }
+
+      trip.driverNotes = driverNotes || "";
+      await trip.save();
+
+      res.status(200).json({ success: true, data: trip });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const driverController = new DriverController();
+
