@@ -51,7 +51,7 @@ const oneTimeChangeSchema = new Schema<IOneTimeChange>(
     endTime: { type: String },
     reason: { type: String },
   },
-  { _id: false }
+  { _id: true }
 );
 
 const dayScheduleSchema = new Schema<IDaySchedule>(

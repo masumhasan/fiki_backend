@@ -971,7 +971,7 @@ export class AdminController {
         startTime: working ? startTime : undefined,
         endTime: working ? endTime : undefined,
         reason,
-      });
+      } as any);
 
       profile.oneTimeChanges = cleanChanges;
       await profile.save();
@@ -982,6 +982,106 @@ export class AdminController {
           id,
           oneTimeChanges: profile.oneTimeChanges,
         },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getOneTimeChanges(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid driver ID format" } });
+        return;
+      }
+
+      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(id) }).lean();
+      if (!profile) {
+        res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        data: { oneTimeChanges: profile.oneTimeChanges || [] },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateOneTimeChange(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id, changeId } = req.params as { id: string; changeId: string };
+      if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(changeId)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid ID format" } });
+        return;
+      }
+
+      const { date, working, startTime, endTime, reason } = req.body;
+
+      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(id) });
+      if (!profile) {
+        res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
+        return;
+      }
+
+      const change = (profile.oneTimeChanges as any[]).find(
+        (c: any) => c._id?.toString() === changeId
+      );
+      if (!change) {
+        res.status(404).json({ success: false, error: { code: "CHANGE_NOT_FOUND", message: "One-time change not found" } });
+        return;
+      }
+
+      if (date) change.date = new Date(date);
+      if (typeof working === "boolean") change.working = working;
+      change.startTime = working ? (startTime ?? change.startTime) : undefined;
+      change.endTime = working ? (endTime ?? change.endTime) : undefined;
+      change.reason = reason ?? change.reason;
+
+      profile.markModified("oneTimeChanges");
+      await profile.save();
+
+      res.status(200).json({
+        success: true,
+        data: { oneTimeChanges: profile.oneTimeChanges },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deleteOneTimeChange(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id, changeId } = req.params as { id: string; changeId: string };
+      if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(changeId)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid ID format" } });
+        return;
+      }
+
+      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(id) });
+      if (!profile) {
+        res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
+        return;
+      }
+
+      const before = (profile.oneTimeChanges || []).length;
+      profile.oneTimeChanges = (profile.oneTimeChanges as any[]).filter(
+        (c: any) => c._id?.toString() !== changeId
+      ) as any;
+
+      if (profile.oneTimeChanges.length === before) {
+        res.status(404).json({ success: false, error: { code: "CHANGE_NOT_FOUND", message: "One-time change not found" } });
+        return;
+      }
+
+      await profile.save();
+
+      res.status(200).json({
+        success: true,
+        data: { oneTimeChanges: profile.oneTimeChanges },
       });
     } catch (error) {
       next(error);
