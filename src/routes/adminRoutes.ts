@@ -22,6 +22,7 @@ router.delete("/drivers/:id", (req, res, next) => adminController.deleteDriver(r
 router.get("/trips", (req, res, next) => adminController.getTrips(req, res, next));
 router.get("/trips/:id", (req, res, next) => adminController.getTripById(req, res, next));
 router.post("/trips", (req, res, next) => adminController.createTrip(req, res, next));
+router.post("/trips/:id/cancel", (req, res, next) => adminController.cancelTripAdmin(req, res, next));
 router.patch("/trips/:id/assign", (req, res, next) => adminController.assignDriver(req, res, next));
 router.patch("/trips/:id/quote", (req, res, next) => adminController.sendQuote(req, res, next));
 router.post("/trips/:id/counter-response", (req, res, next) => adminController.respondToCounterOffer(req, res, next));

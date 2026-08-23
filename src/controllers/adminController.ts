@@ -469,6 +469,65 @@ export class AdminController {
         return;
       }
 
+      let driverProfile = null;
+      if (trip.driverId) {
+        const driverObjId = (trip.driverId as any)._id || trip.driverId;
+        driverProfile = await DriverProfile.findOne({ userId: driverObjId })
+          .select("vehicle rating availabilityStatus")
+          .lean();
+      }
+
+      const auditLogs = await AuditLog.find({ resourceId: id })
+        .sort({ timestamp: -1 })
+        .lean();
+
+      res.status(200).json({
+        success: true,
+        data: {
+          ...trip,
+          driverProfile,
+          auditLogs,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async cancelTripAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      if (trip.status === "COMPLETED" || trip.status === "CANCELLED") {
+        res.status(409).json({ success: false, error: { code: "INVALID_STATE", message: `Trip is already ${trip.status}` } });
+        return;
+      }
+
+      trip.status = "CANCELLED";
+      trip.cancelledAt = new Date();
+      trip.cancellationReason = req.body?.reason || "Cancelled by admin";
+      await trip.save();
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_CANCELLED_TRIP",
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        newState: { status: "CANCELLED" },
+        requestId: req.requestId,
+      });
+
       res.status(200).json({ success: true, data: trip });
     } catch (error) {
       next(error);
