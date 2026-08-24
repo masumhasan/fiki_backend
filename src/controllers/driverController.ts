@@ -438,8 +438,8 @@ export class DriverController {
       const startOfWeek = new Date(todayStart);
       startOfWeek.setDate(startOfWeek.getDate() - distanceToMon);
 
-      // Fetch today's trips & shift & week shifts concurrently
-      const [todayTrips, todayShift, weekShifts] = await Promise.all([
+      // Fetch today's trips, shift, week shifts, and driver profile concurrently
+      const [todayTrips, todayShift, weekShifts, driverProfile] = await Promise.all([
         Trip.find({
           driverId,
           $or: [
@@ -459,8 +459,35 @@ export class DriverController {
         DriverShift.find({
           driverId,
           createdAt: { $gte: startOfWeek }
-        }).lean()
+        }).lean(),
+
+        DriverProfile.findOne({ userId: driverId }).lean()
       ]);
+
+      // Schedule config from DriverProfile
+      const weeklyScheduleConfig = driverProfile?.weeklySchedule || [];
+      const scheduleMapByDay = new Map(weeklyScheduleConfig.map((s: any) => [s.day, s]));
+      const dayAbbrKeys = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+      const getScheduleConfigForDate = (dateObj: Date) => {
+        const key = dayAbbrKeys[dateObj.getDay()];
+        const cfg = scheduleMapByDay.get(key) as any;
+        if (cfg) {
+          const isWorking = cfg.working !== false;
+          const startTime = cfg.startTime || "08:00 AM";
+          const endTime = cfg.endTime || "04:00 PM";
+          const hoursText = isWorking ? `${startTime} – ${endTime}` : "Day Off";
+          return { isWorking, startTime, endTime, hoursText };
+        }
+        return { isWorking: true, startTime: "08:00 AM", endTime: "04:00 PM", hoursText: "08:00 AM – 04:00 PM" };
+      };
+
+      const todayConfig = getScheduleConfigForDate(now);
+      const todaySchedule = {
+        startTime: todayConfig.startTime,
+        endTime: todayConfig.endTime,
+        hours: todayConfig.isWorking ? "8 hours" : "Day Off",
+      };
 
       // 1. Today's Trip Summary
       const totalTripsCount = todayTrips.length;
@@ -481,11 +508,12 @@ export class DriverController {
       for (let i = 1; i <= 5; i++) {
         const d = new Date(todayStart);
         d.setDate(d.getDate() + i);
+        const dayCfg = getScheduleConfigForDate(d);
         upcomingSchedule.push({
           day: dayAbbrs[d.getDay()],
           date: String(d.getDate()),
-          hours: "07:00 AM – 03:00 PM",
-          status: "Scheduled",
+          hours: dayCfg.hoursText,
+          status: dayCfg.isWorking ? "Scheduled" : "Day Off",
         });
       }
 
@@ -502,12 +530,13 @@ export class DriverController {
         const dateStr = d.toISOString().split("T")[0];
         const dayName = fullDayNames[d.getDay()];
         const formattedDate = `${monthShortNames[d.getMonth()]} ${d.getDate()}`;
+        const dayCfg = getScheduleConfigForDate(d);
 
         const s = shiftMap.get(dateStr) as any;
 
-        let shiftHours = "07:00 AM – 03:00 PM";
-        let totalHours = "8h";
-        let attendance = "Pending";
+        let shiftHours = dayCfg.hoursText;
+        let totalHours = dayCfg.isWorking ? "8h" : "—";
+        let attendance = dayCfg.isWorking ? "Pending" : "Off";
         let approval = "Pending";
 
         if (s) {
@@ -537,17 +566,17 @@ export class DriverController {
           }
         } else {
           if (d < todayStart) {
-            attendance = "Off";
+            attendance = dayCfg.isWorking ? "Absent" : "Off";
             approval = "Approved";
             totalHours = "—";
           } else if (d.getTime() === todayStart.getTime()) {
-            attendance = todayShift?.status === "IN_PROGRESS" ? "In Progress" : "Pending";
+            attendance = todayShift?.status === "IN_PROGRESS" ? "In Progress" : dayCfg.isWorking ? "Pending" : "Off";
             approval = "Pending";
-            totalHours = "8h";
+            totalHours = dayCfg.isWorking ? "8h" : "—";
           } else {
-            attendance = "Scheduled";
+            attendance = dayCfg.isWorking ? "Scheduled" : "Off";
             approval = "Pending";
-            totalHours = "8h";
+            totalHours = dayCfg.isWorking ? "8h" : "—";
           }
         }
 
@@ -565,6 +594,7 @@ export class DriverController {
         success: true,
         data: {
           todayShift: todayShift || null,
+          todaySchedule,
           tripSummary,
           upcomingSchedule,
           weeklySchedule,
