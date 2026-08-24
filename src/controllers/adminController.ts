@@ -669,101 +669,76 @@ export class AdminController {
 
   async getAnalytics(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-
-      const todayTrips = await Trip.countDocuments({ createdAt: { $gte: todayStart } });
-      const pendingRequests = await Trip.countDocuments({ status: { $in: ["REQUESTED", "QUOTE_COUNTERED"] } });
-      const activeDriversCount = await DriverProfile.countDocuments({ availabilityStatus: { $in: ["ONLINE", "ON_TRIP", "ASSIGNED"] } });
-      const completedTripsCount = await Trip.countDocuments({ status: "COMPLETED" });
-      const totalTrips = await Trip.countDocuments();
-      const totalDrivers = await DriverProfile.countDocuments();
-      const revenueAgg = await Trip.aggregate([
-        { $match: { status: "COMPLETED" } },
-        { $group: { _id: null, totalRevenue: { $sum: "$fare" } } }
-      ]);
-      const totalRevenue = revenueAgg[0]?.totalRevenue || 0;
-
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-      sevenDaysAgo.setHours(0, 0, 0, 0);
-
-      const weeklyTripsAgg = await Trip.aggregate([
-        { $match: { createdAt: { $gte: sevenDaysAgo } } },
-        {
-          $group: {
-            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-            total: { $sum: 1 },
-            completed: {
-              $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] }
-            }
-          }
-        },
-        { $sort: { _id: 1 } }
-      ]);
-
-      const weeklyMap = new Map(weeklyTripsAgg.map((w: any) => [w._id, { total: w.total, completed: w.completed }]));
-      const weeklyTripVolume = [];
-      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(sevenDaysAgo);
-        d.setDate(d.getDate() + i);
-        const dateStr = d.toISOString().split("T")[0];
-        weeklyTripVolume.push({
-          date: days[d.getDay()],
-          total: weeklyMap.get(dateStr)?.total || 0,
-          completed: weeklyMap.get(dateStr)?.completed || 0,
-        });
-      }
+      const startOfWeek = new Date(todayStart);
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); // Sunday start of week
+      
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startOfYear = new Date(now.getFullYear(), 0, 1);
 
-      // --- Monthly (Last 28 Days) ---
-      const twentyEightDaysAgo = new Date();
-      twentyEightDaysAgo.setDate(twentyEightDaysAgo.getDate() - 27);
-      twentyEightDaysAgo.setHours(0, 0, 0, 0);
+      // 1. Basic counts & totals
+      const totalTrips = await Trip.countDocuments();
+      const completedTrips = await Trip.countDocuments({ status: "COMPLETED" });
+      const pendingRequests = await Trip.countDocuments({ status: { $in: ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT"] } });
+      const cancelledTrips = await Trip.countDocuments({ status: "CANCELLED" });
+      const rejectedTrips = await Trip.countDocuments({ status: "QUOTE_DENIED" });
 
-      const monthlyTripsAgg = await Trip.aggregate([
-        { $match: { createdAt: { $gte: twentyEightDaysAgo } } },
-        {
-          $group: {
-            _id: {
-              $subtract: [
-                { $floor: { $divide: [{ $subtract: ["$createdAt", twentyEightDaysAgo] }, 1000 * 60 * 60 * 24 * 7] } },
-                0
-              ]
-            },
-            total: { $sum: 1 },
-            completed: {
-              $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] }
-            }
-          }
-        }
+      const totalDrivers = await User.countDocuments({ role: "DRIVER", deletedAt: null });
+      const activeDriversCount = await DriverProfile.countDocuments({ availabilityStatus: { $in: ["ONLINE", "ASSIGNED", "ON_TRIP"] } });
+      const onTripDriversCount = await DriverProfile.countDocuments({ availabilityStatus: "ON_TRIP" });
+
+      const totalPassengers = await User.countDocuments({ role: "PASSENGER", deletedAt: null });
+      const newPassengersThisWeek = await User.countDocuments({ role: "PASSENGER", deletedAt: null, createdAt: { $gte: startOfWeek } });
+
+      // Revenue Aggregations
+      const completedRevenueAgg = await Trip.aggregate([
+        { $match: { status: "COMPLETED" } },
+        { $group: { _id: null, total: { $sum: "$fare" } } }
       ]);
-      const monthlyTripVolume = [
-        { date: "Week 1", total: 0, completed: 0 },
-        { date: "Week 2", total: 0, completed: 0 },
-        { date: "Week 3", total: 0, completed: 0 },
-        { date: "Week 4", total: 0, completed: 0 },
-      ];
-      monthlyTripsAgg.forEach(w => {
-        if (w._id >= 0 && w._id < 4) {
-          monthlyTripVolume[w._id].total = w.total;
-          monthlyTripVolume[w._id].completed = w.completed;
-        }
-      });
+      const totalRevenue = completedRevenueAgg[0]?.total || 0;
 
-      // --- Yearly (Last 12 Months) ---
-      const twelveMonthsAgo = new Date();
-      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 11);
-      twelveMonthsAgo.setDate(1);
-      twelveMonthsAgo.setHours(0, 0, 0, 0);
+      const outstandingAgg = await Trip.aggregate([
+        { $match: { status: { $nin: ["COMPLETED", "CANCELLED", "QUOTE_DENIED"] } } },
+        { $group: { _id: null, total: { $sum: { $ifNull: ["$quotedFare", { $ifNull: ["$fare", 0] }] } } } }
+      ]);
+      const outstandingPayments = outstandingAgg[0]?.total || 0;
 
-      const yearlyTripsAgg = await Trip.aggregate([
-        { $match: { createdAt: { $gte: twelveMonthsAgo } } },
+      // Period Revenue Summary
+      const todayRevenueAgg = await Trip.aggregate([
+        { $match: { status: "COMPLETED", completedAt: { $gte: todayStart } } },
+        { $group: { _id: null, total: { $sum: "$fare" } } }
+      ]);
+      const todayRevenue = todayRevenueAgg[0]?.total || 0;
+
+      const weeklyRevenueAgg = await Trip.aggregate([
+        { $match: { status: "COMPLETED", completedAt: { $gte: startOfWeek } } },
+        { $group: { _id: null, total: { $sum: "$fare" } } }
+      ]);
+      const weeklyRevenue = weeklyRevenueAgg[0]?.total || 0;
+
+      const monthlyRevenueAgg = await Trip.aggregate([
+        { $match: { status: "COMPLETED", completedAt: { $gte: startOfMonth } } },
+        { $group: { _id: null, total: { $sum: "$fare" } } }
+      ]);
+      const monthlyRevenue = monthlyRevenueAgg[0]?.total || 0;
+
+      const yearlyRevenueAgg = await Trip.aggregate([
+        { $match: { status: "COMPLETED", completedAt: { $gte: startOfYear } } },
+        { $group: { _id: null, total: { $sum: "$fare" } } }
+      ]);
+      const yearlyRevenue = yearlyRevenueAgg[0]?.total || 0;
+
+      const avgRidePrice = completedTrips > 0 ? (totalRevenue / completedTrips) : 0;
+
+      // 2. Monthly Ride Performance (12 Months Jan - Dec of current year)
+      const monthlyPerformanceAgg = await Trip.aggregate([
+        { $match: { createdAt: { $gte: startOfYear } } },
         {
           $group: {
-            _id: { $month: "$createdAt" }, // 1-12
-            total: { $sum: 1 },
+            _id: { $month: "$createdAt" },
+            requested: { $sum: 1 },
             completed: {
               $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] }
             }
@@ -772,171 +747,190 @@ export class AdminController {
       ]);
       
       const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      const yearlyTripVolume = [];
-      for (let i = 0; i < 12; i++) {
-        const d = new Date(twelveMonthsAgo);
-        d.setMonth(d.getMonth() + i);
-        const m = d.getMonth() + 1;
-        const found = yearlyTripsAgg.find(y => y._id === m);
-        yearlyTripVolume.push({
-          date: monthNames[m - 1],
-          total: found?.total || 0,
-          completed: found?.completed || 0,
-        });
-      }
-
-      // Fetch active drivers
-      const activeProfiles = await DriverProfile.find({ availabilityStatus: { $in: ["ONLINE", "ON_TRIP", "ASSIGNED"] } })
-        .populate("userId", "name")
-        .limit(5)
-        .lean();
-        
-      const colors = ["#082552", "#7439ed", "#2665e7", "#dc2626", "#0794b5", "#10ac7b"];
-      const driverStatus = activeProfiles.map((p: any, idx: number) => ({
-        id: p.userId?._id,
-        name: p.userId?.name || "Unknown",
-        initials: p.userId?.name ? p.userId.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) : "DR",
-        vehicle: p.vehicle?.model ? p.vehicle.model : (typeof p.vehicle === 'string' ? p.vehicle : "Standard Vehicle"),
-        status: p.availabilityStatus === "ONLINE" ? "Active" : p.availabilityStatus === "ON_TRIP" ? "On Trip" : p.availabilityStatus === "ASSIGNED" ? "Assigned" : "Active",
-        color: colors[idx % colors.length],
-      }));
-
-      // --- Driver Performance ---
-      const getDriverPerf = async (days: number) => {
-        const d = new Date();
-        d.setDate(d.getDate() - days);
-        d.setHours(0, 0, 0, 0);
-        const agg = await Trip.aggregate([
-          { $match: { createdAt: { $gte: d }, status: "COMPLETED", driverId: { $ne: null } } },
-          { $group: { _id: "$driverId", trips: { $sum: 1 } } },
-          { $sort: { trips: -1 } },
-          { $limit: 5 },
-          { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "driver" } },
-          { $unwind: { path: "$driver", preserveNullAndEmptyArrays: true } }
-        ]);
-        return agg.map((p: any) => {
-          let shortName = "Unknown";
-          if (p.driver?.name) {
-            const parts = p.driver.name.split(" ");
-            shortName = `${parts[0]} ${parts[1] ? parts[1][0] + "." : ""}`;
-          }
-          return { name: shortName, trips: p.trips };
-        });
-      };
-
-      const [weeklyDriverPerf, fortnightlyDriverPerf, monthlyDriverPerf, yearlyDriverPerf] = await Promise.all([
-        getDriverPerf(7),
-        getDriverPerf(14),
-        getDriverPerf(30),
-        getDriverPerf(365)
-      ]);
-
-      // Fetch Activity Feed (from recent trips)
-      const recentTrips = await Trip.find()
-        .populate("passengerId", "name")
-        .sort({ updatedAt: -1 })
-        .limit(6)
-        .lean();
-
-      const activityFeed = recentTrips.map((t: any) => {
-        const tripId = `T-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
-        const passengerName = t.passengerId?.name || "Unknown";
-        
-        let title = `Trip ${tripId} updated`;
-        let color = "#3b82f6";
-        
-        if (t.status === "COMPLETED") {
-           title = `Trip ${tripId} completed successfully`;
-           color = "#22c55e";
-        } else if (t.status === "REQUESTED") {
-           title = `New ride request from ${passengerName}`;
-           color = "#3b82f6";
-        } else if (t.status === "QUOTE_COUNTERED") {
-           title = `Trip ${tripId} counter-offered by passenger`;
-           color = "#f59e0b";
-        } else if (t.status === "CANCELLED" || t.status === "QUOTE_DENIED") {
-           title = `Trip ${tripId} was rejected or cancelled`;
-           color = "#ff5a5f";
-        } else if (t.status === "IN_PROGRESS" || t.status === "DRIVER_ARRIVING" || t.status === "DRIVER_ARRIVED") {
-           title = `Trip ${tripId} in progress`;
-           color = "#16345e";
-        } else if (t.status === "ACCEPTED" || t.status === "QUOTE_ACCEPTED") {
-           title = `Trip ${tripId} approved / driver assigned`;
-           color = "#8345ed";
-        }
-
-        const diffMs = Date.now() - new Date(t.updatedAt).getTime();
-        const diffMins = Math.floor(diffMs / 60000);
-        let timeAgo = `${diffMins} min ago`;
-        if (diffMins > 60) {
-          const diffHrs = Math.floor(diffMins / 60);
-          timeAgo = `${diffHrs}h ${diffMins % 60}m ago`;
-        }
-        if (diffMins > 1440) {
-          const diffDays = Math.floor(diffMins / 1440);
-          timeAgo = `${diffDays} days ago`;
-        }
-
+      const monthlyPerformanceMap = new Map(monthlyPerformanceAgg.map(m => [m._id, m]));
+      const monthlyRidePerformance = monthNames.map((month, idx) => {
+        const item = monthlyPerformanceMap.get(idx + 1);
         return {
-          title,
-          time: timeAgo,
-          color,
+          month,
+          requested: item?.requested || 0,
+          completed: item?.completed || 0,
         };
       });
 
-      const recentRideRequests = recentTrips.slice(0, 4).map((t: any, idx: number) => {
-        const passengerName = t.passengerId?.name || "Passenger";
-        const initials = passengerName.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) || "PA";
-        const pickup = t.pickupLocation?.address || "Unknown Pickup";
-        const dropoff = t.dropoffLocation?.address || "Unknown Dropoff";
+      // 3. Revenue Overview Monthly (12 Months)
+      const revenueOverviewAgg = await Trip.aggregate([
+        { $match: { createdAt: { $gte: startOfYear } } },
+        {
+          $group: {
+            _id: { $month: "$createdAt" },
+            monthlyRevenue: {
+              $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, "$fare", 0] }
+            },
+            outstanding: {
+              $sum: {
+                $cond: [
+                  { $nin: ["$status", ["COMPLETED", "CANCELLED", "QUOTE_DENIED"]] },
+                  { $ifNull: ["$quotedFare", { $ifNull: ["$fare", 0] }] },
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ]);
+      const revenueOverviewMap = new Map(revenueOverviewAgg.map(r => [r._id, r]));
+      const revenueOverview = monthNames.map((month, idx) => {
+        const item = revenueOverviewMap.get(idx + 1);
+        return {
+          month,
+          monthlyRevenue: item?.monthlyRevenue || 0,
+          outstanding: item?.outstanding || 0,
+        };
+      });
+
+      // 4. Top Drivers
+      const topDriversAgg = await Trip.aggregate([
+        { $match: { status: "COMPLETED", driverId: { $ne: null } } },
+        {
+          $group: {
+            _id: "$driverId",
+            tripsCount: { $sum: 1 },
+            revenueSum: { $sum: "$fare" }
+          }
+        },
+        { $sort: { tripsCount: -1 } },
+        { $limit: 10 }
+      ]);
+
+      const topDriverUserIds = topDriversAgg.map(d => d._id);
+      const driverUsers = await User.find({ _id: { $in: topDriverUserIds } }).lean();
+      const driverProfiles = await DriverProfile.find({ userId: { $in: topDriverUserIds } }).lean();
+      
+      const userMap = new Map(driverUsers.map(u => [u._id.toString(), u]));
+      const profileMap = new Map(driverProfiles.map(p => [p.userId.toString(), p]));
+
+      let topDrivers = topDriversAgg.map(item => {
+        const uidStr = item._id.toString();
+        const u = userMap.get(uidStr);
+        const p = profileMap.get(uidStr);
+        const name = u?.name || "Driver";
+        const initials = name.split(" ").map(n => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
+        
+        let statusStr = "Active";
+        if (p?.availabilityStatus === "ASSIGNED") statusStr = "On Trip";
+        else if (p?.availabilityStatus === "OFFLINE" || p?.availabilityStatus === "UNAVAILABLE") statusStr = "Off Duty";
+
+
+        return {
+          id: uidStr,
+          initials,
+          name,
+          trips: item.tripsCount,
+          rating: (p?.rating || 4.8).toFixed(1),
+          revenue: `$${item.revenueSum.toLocaleString()}`,
+          revenueVal: item.revenueSum,
+          status: statusStr,
+        };
+      });
+
+      // Fallback: If no trips completed yet, fetch approved drivers
+      if (topDrivers.length === 0) {
+        const approvedProfiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).limit(6).lean();
+        const appUserIds = approvedProfiles.map(p => p.userId);
+        const appUsers = await User.find({ _id: { $in: appUserIds } }).lean();
+        const appUserMap = new Map(appUsers.map(u => [u._id.toString(), u]));
+
+        topDrivers = approvedProfiles.map(p => {
+          const uidStr = p.userId.toString();
+          const u = appUserMap.get(uidStr);
+          const name = u?.name || "Driver";
+          const initials = name.split(" ").map(n => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
+          let statusStr = "Active";
+          if (p.availabilityStatus === "ASSIGNED") statusStr = "On Trip";
+          else if (p.availabilityStatus === "OFFLINE" || p.availabilityStatus === "UNAVAILABLE") statusStr = "Off Duty";
+
+
+          return {
+            id: uidStr,
+            initials,
+            name,
+            trips: p.completedTripsCount || 0,
+            rating: (p.rating || 4.8).toFixed(1),
+            revenue: "$0",
+            revenueVal: 0,
+            status: statusStr,
+          };
+        });
+      }
+
+      // 5. Recent Ride Requests
+      const recentTripsDocs = await Trip.find()
+        .populate("passengerId", "name")
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+
+      const recentRideRequests = recentTripsDocs.map(t => {
+        const rideId = `FT-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
+        const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
+        const dest = t.dropoffLocation?.address || t.returnDestinationAddress || "Destination";
         
         let statusStr = "Pending";
         if (t.status === "COMPLETED") statusStr = "Completed";
-        else if (t.status === "ACCEPTED" || t.status === "QUOTE_ACCEPTED") statusStr = "Approved";
-        else if (t.status === "REQUESTED") statusStr = "Need Driver";
-        else if (t.status === "IN_PROGRESS" || t.status === "DRIVER_ARRIVING" || t.status === "DRIVER_ARRIVED") statusStr = "Onboard";
+        else if (["ACCEPTED", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"].includes(t.status)) statusStr = "In Progress";
+        else if (t.status === "CANCELLED" || t.status === "QUOTE_DENIED") statusStr = "Cancelled";
+        
+        const priceVal = t.fare || t.quotedFare || 0;
+        const priceStr = `$${priceVal.toFixed(2)}`;
 
-        return [
-          initials,
-          passengerName,
-          `${pickup} → ${dropoff}`,
-          statusStr,
-          t.createdAt ? new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Recently",
-          colors[idx % colors.length],
-          t._id.toString()
-        ];
+        return {
+          id: rideId,
+          rawId: t._id.toString(),
+          passenger: passengerName,
+          destination: dest,
+          status: statusStr,
+          price: priceStr,
+          priceVal,
+        };
       });
 
       res.status(200).json({
         success: true,
         data: {
           metrics: {
-            todayTrips,
+            todayTrips: await Trip.countDocuments({ createdAt: { $gte: todayStart } }),
             pendingRequests,
             activeDrivers: activeDriversCount,
-            completedTrips: completedTripsCount,
+            onTripDrivers: onTripDriversCount,
+            completedTrips,
+            cancelledTrips,
+            rejectedTrips,
             totalTrips,
             totalDrivers,
+            totalPassengers,
+            newPassengersThisWeek,
             totalRevenue,
+            outstandingPayments,
           },
-          weeklyTripVolume,
-          monthlyTripVolume,
-          yearlyTripVolume,
-          driverStatus,
-          activityFeed,
+          revenueSummary: {
+            todayRevenue,
+            weeklyRevenue,
+            monthlyRevenue,
+            yearlyRevenue,
+            outstandingBalance: outstandingPayments,
+            avgRidePrice,
+          },
+          monthlyRidePerformance,
+          revenueOverview,
+          topDrivers,
           recentRideRequests,
-          driverPerformance: {
-            week: weeklyDriverPerf,
-            fortnight: fortnightlyDriverPerf,
-            month: monthlyDriverPerf,
-            year: yearlyDriverPerf
-          }
         },
       });
     } catch (error) {
       next(error);
     }
   }
+
 
   async deleteDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
