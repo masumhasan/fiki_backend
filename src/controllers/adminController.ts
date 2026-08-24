@@ -871,10 +871,14 @@ export class AdminController {
         .limit(10)
         .lean();
 
-      const recentRideRequests = recentTripsDocs.map(t => {
+      const colors = ["#082552", "#7439ed", "#2665e7", "#dc2626", "#0794b5", "#10ac7b"];
+      const recentRideRequests = recentTripsDocs.map((t: any, idx: number) => {
         const rideId = `FT-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
         const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
-        const dest = t.dropoffLocation?.address || t.returnDestinationAddress || "Destination";
+        const initials = passengerName.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) || "PA";
+        const pickup = t.pickupLocation?.address || "Pickup";
+        const dropoff = t.dropoffLocation?.address || t.returnDestinationAddress || "Destination";
+        const route = `${pickup} → ${dropoff}`;
         
         let statusStr = "Pending";
         if (t.status === "COMPLETED") statusStr = "Completed";
@@ -883,17 +887,19 @@ export class AdminController {
         
         const priceVal = t.fare || t.quotedFare || 0;
         const priceStr = `$${priceVal.toFixed(2)}`;
+        const color = colors[idx % colors.length];
 
-        return {
-          id: rideId,
-          rawId: t._id.toString(),
-          passenger: passengerName,
-          destination: dest,
-          status: statusStr,
-          price: priceStr,
-          priceVal,
-        };
+        return [
+          initials,
+          passengerName,
+          route,
+          statusStr,
+          priceStr,
+          color,
+          rideId
+        ];
       });
+
 
       res.status(200).json({
         success: true,
