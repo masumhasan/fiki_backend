@@ -217,6 +217,26 @@ export class DriverController {
         return;
       }
 
+      // Enforce that driver has an active shift started today before performing trip status updates
+      const todayStr = new Date().toISOString().split("T")[0];
+      const activeShift = await DriverShift.findOne({
+        driverId: req.user.userId,
+        shiftDate: todayStr,
+        status: "IN_PROGRESS",
+      });
+
+      if (!activeShift) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: "SHIFT_NOT_STARTED",
+            message: "You must start your shift from the 'My Schedule & Attendance' page before performing trip actions or starting a pickup.",
+          },
+        });
+        return;
+      }
+
+
       // Enforce valid state machine transitions
       const ALLOWED_TRANSITIONS: Record<TripStatus, TripStatus[]> = {
         REQUESTED: ["ACCEPTED", "CANCELLED"],
