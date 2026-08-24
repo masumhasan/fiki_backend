@@ -769,10 +769,11 @@ export class AdminController {
             outstanding: {
               $sum: {
                 $cond: [
-                  { $nin: ["$status", ["COMPLETED", "CANCELLED", "QUOTE_DENIED"]] },
+                  { $not: [{ $in: ["$status", ["COMPLETED", "CANCELLED", "QUOTE_DENIED"]] }] },
                   { $ifNull: ["$quotedFare", { $ifNull: ["$fare", 0] }] },
                   0
                 ]
+
               }
             }
           }
