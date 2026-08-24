@@ -293,35 +293,6 @@ export class DriverController {
     }
   }
 
-  async getEarnings(req: Request, res: Response, next: NextFunction): Promise<void> {
-    try {
-      if (!req.user) {
-        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
-        return;
-      }
-
-      const completedTrips = await Trip.find({
-        driverId: req.user.userId,
-        status: "COMPLETED",
-      }).select("fare completedAt createdAt").lean();
-
-      const totalEarnings = completedTrips.reduce((acc, t) => acc + (t.fare || 0), 0);
-      const totalRides = completedTrips.length;
-
-      res.status(200).json({
-        success: true,
-        data: {
-          totalEarnings,
-          totalRides,
-          currency: "USD",
-          trips: completedTrips,
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
   async getTripById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {
@@ -380,6 +351,89 @@ export class DriverController {
       await trip.save();
 
       res.status(200).json({ success: true, data: trip });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getEarnings(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const driverId = req.user.userId;
+      const profile = await DriverProfile.findOne({ userId: driverId }).lean();
+      
+      const hourlyRate = profile?.hourlyRate ?? 14.0;
+      const approvedHours = profile?.approvedHours ?? 80.0;
+      const payrollStatus = profile?.payrollStatus || "Approved";
+
+      // 14-day current pay period calculation window
+      const now = new Date();
+      const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+      // Fetch completed trips in current pay period
+      const completedTrips = await Trip.find({
+        driverId,
+        status: "COMPLETED",
+        createdAt: { $gte: fourteenDaysAgo }
+      }).sort({ createdAt: -1 }).lean();
+
+      const completedTripsCount = completedTrips.length;
+      const tripBonusPerRide = 3.0;
+      const tripBonus = completedTripsCount * tripBonusPerRide;
+      const regularWages = hourlyRate * approvedHours;
+      const grossEarnings = regularWages + tripBonus;
+
+      // Date range formatting
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const payPeriodStartStr = `${monthNames[fourteenDaysAgo.getMonth()]} ${fourteenDaysAgo.getDate()}`;
+      const payPeriodEndStr = `${monthNames[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+      const payPeriodRange = `${payPeriodStartStr} – ${payPeriodEndStr}`;
+
+      const expectedPayDateObj = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000);
+      const expectedPayDate = `${monthNames[expectedPayDateObj.getMonth()]} ${expectedPayDateObj.getDate()}, ${expectedPayDateObj.getFullYear()}`;
+
+      // Map rides for ride history
+      const rideHistory = completedTrips.map((t: any) => {
+        const tripId = `TRP-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
+        const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
+        const pickup = t.pickupLocation?.address || "Pickup";
+        const dropoff = t.dropoffLocation?.address || t.returnDestinationAddress || "Destination";
+        const d = new Date(t.createdAt);
+        const dateStr = `${monthNames[d.getMonth()]} ${d.getDate()}`;
+        return {
+          date: dateStr,
+          tripId,
+          passenger: passengerName,
+          type: t.mobilityOptions?.includes("stretcher") ? "Stretcher" : t.mobilityOptions?.includes("wheelchair") ? "Wheelchair" : "Standard",
+          pickup,
+          destination: dropoff,
+          status: "Completed",
+          bonus: "+$3.00",
+        };
+      });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          hourlyRate,
+          approvedHours,
+          completedTripsCount,
+          tripBonusPerRide,
+          tripBonus,
+          regularWages,
+          grossEarnings,
+          totalEarnings: grossEarnings,
+          totalRides: completedTripsCount,
+          payrollStatus,
+          payPeriodRange,
+          expectedPayDate,
+          rideHistory,
+        },
+      });
     } catch (error) {
       next(error);
     }

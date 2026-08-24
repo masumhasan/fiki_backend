@@ -1298,6 +1298,137 @@ export class AdminController {
     }
   }
 
+  async getDriverEarningsList(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const now = new Date();
+      const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+      // Fetch all driver profiles
+      const profiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).lean();
+      const userIds = profiles.map((p: any) => p.userId);
+      const users = await User.find({ _id: { $in: userIds } }).select("name email phone").lean();
+      const userMap = new Map(users.map((u: any) => [u._id.toString(), u]));
+
+      // Fetch completed trip counts in past 14 days per driver
+      const tripAgg = await Trip.aggregate([
+        {
+          $match: {
+            driverId: { $in: userIds },
+            status: "COMPLETED",
+            createdAt: { $gte: fourteenDaysAgo }
+          }
+        },
+        {
+          $group: {
+            _id: "$driverId",
+            completedCount: { $sum: 1 }
+          }
+        }
+      ]);
+
+      const tripCountMap = new Map(tripAgg.map((item: any) => [item._id.toString(), item.completedCount]));
+
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const payPeriodStartStr = `${monthNames[fourteenDaysAgo.getMonth()]} ${fourteenDaysAgo.getDate()}`;
+      const payPeriodEndStr = `${monthNames[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+      const payPeriodRange = `${payPeriodStartStr} – ${payPeriodEndStr}`;
+
+      const drivers = profiles.map((p: any) => {
+        const uidStr = p.userId.toString();
+        const u = userMap.get(uidStr);
+        const name = u?.name || "Driver";
+        const email = u?.email || "";
+        const phone = u?.phone || "";
+
+        const hourlyRate = p.hourlyRate ?? 14.0;
+        const approvedHours = p.approvedHours ?? 80.0;
+        const completedTrips = tripCountMap.get(uidStr) || p.completedTripsCount || 0;
+        const tripBonus = completedTrips * 3.0;
+        const regularWages = hourlyRate * approvedHours;
+        const grossEarnings = regularWages + tripBonus;
+
+        return {
+          driverId: uidStr,
+          name,
+          email,
+          phone,
+          vehicle: p.vehicle ? `${p.vehicle.make || ""} ${p.vehicle.model || ""}`.trim() || "Unassigned" : "Unassigned",
+          licensePlate: p.vehicle?.licensePlate || "N/A",
+          hourlyRate,
+          approvedHours,
+          completedTrips,
+          tripBonus,
+          regularWages,
+          grossEarnings,
+          payrollStatus: p.payrollStatus || "Approved",
+        };
+      });
+
+      // Calculate summary totals across all drivers
+      const totalPayroll = drivers.reduce((sum: number, d: any) => sum + d.grossEarnings, 0);
+      const avgHourlyRate = drivers.length > 0 ? (drivers.reduce((sum: number, d: any) => sum + d.hourlyRate, 0) / drivers.length) : 14.0;
+      const totalApprovedHours = drivers.reduce((sum: number, d: any) => sum + d.approvedHours, 0);
+
+      res.status(200).json({
+        success: true,
+        data: {
+          payPeriodRange,
+          summary: {
+            totalPayroll,
+            avgHourlyRate: Math.round(avgHourlyRate * 100) / 100,
+            totalApprovedHours,
+            totalDriversCount: drivers.length,
+          },
+          drivers,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateDriverEarnings(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const driverId = req.params.driverId as string;
+      if (!driverId || !mongoose.Types.ObjectId.isValid(driverId)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid driver ID format" } });
+        return;
+      }
+
+      const { hourlyRate, approvedHours, payrollStatus } = req.body;
+
+      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(driverId) });
+      if (!profile) {
+        res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
+        return;
+      }
+
+      if (typeof hourlyRate === "number" && hourlyRate >= 0) {
+        profile.hourlyRate = hourlyRate;
+      }
+      if (typeof approvedHours === "number" && approvedHours >= 0) {
+        profile.approvedHours = approvedHours;
+      }
+      if (payrollStatus && typeof payrollStatus === "string") {
+        profile.payrollStatus = payrollStatus;
+      }
+
+      await profile.save();
+
+      res.status(200).json({
+        success: true,
+        data: {
+          driverId,
+          hourlyRate: profile.hourlyRate,
+          approvedHours: profile.approvedHours,
+          payrollStatus: profile.payrollStatus,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async updateDispatchNumber(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { dispatchNumber } = req.body;

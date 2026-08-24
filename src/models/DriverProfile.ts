@@ -37,6 +37,9 @@ export interface IDriverProfile extends Document {
   };
   rating?: number;
   completedTripsCount: number;
+  hourlyRate: number;
+  approvedHours: number;
+  payrollStatus: string;
   weeklySchedule: IDaySchedule[];
   oneTimeChanges: IOneTimeChange[];
   createdAt: Date;
@@ -122,6 +125,9 @@ const driverProfileSchema = new Schema<IDriverProfile>(
     },
     rating: { type: Number, default: 5.0 },
     completedTripsCount: { type: Number, default: 0 },
+    hourlyRate: { type: Number, default: 14.0 },
+    approvedHours: { type: Number, default: 80.0 },
+    payrollStatus: { type: String, default: "Approved" },
   },
   {
     timestamps: true,
