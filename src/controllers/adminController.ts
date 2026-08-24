@@ -678,78 +678,149 @@ export class AdminController {
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const startOfYear = new Date(now.getFullYear(), 0, 1);
 
-      // 1. Basic counts & totals
-      const totalTrips = await Trip.countDocuments();
-      const completedTrips = await Trip.countDocuments({ status: "COMPLETED" });
-      const pendingRequests = await Trip.countDocuments({ status: { $in: ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT"] } });
-      const cancelledTrips = await Trip.countDocuments({ status: "CANCELLED" });
-      const rejectedTrips = await Trip.countDocuments({ status: "QUOTE_DENIED" });
-
-      const totalDrivers = await User.countDocuments({ role: "DRIVER", deletedAt: null });
-      const activeDriversCount = await DriverProfile.countDocuments({ availabilityStatus: { $in: ["ONLINE", "ASSIGNED", "ON_TRIP"] } });
-      const onTripDriversCount = await DriverProfile.countDocuments({ availabilityStatus: "ON_TRIP" });
-
-      const totalPassengers = await User.countDocuments({ role: "PASSENGER", deletedAt: null });
-      const newPassengersThisWeek = await User.countDocuments({ role: "PASSENGER", deletedAt: null, createdAt: { $gte: startOfWeek } });
-
-      // Revenue Aggregations
-      const completedRevenueAgg = await Trip.aggregate([
-        { $match: { status: "COMPLETED" } },
-        { $group: { _id: null, total: { $sum: "$fare" } } }
-      ]);
-      const totalRevenue = completedRevenueAgg[0]?.total || 0;
-
-      const outstandingAgg = await Trip.aggregate([
-        { $match: { status: { $nin: ["COMPLETED", "CANCELLED", "QUOTE_DENIED"] } } },
-        { $group: { _id: null, total: { $sum: { $ifNull: ["$quotedFare", { $ifNull: ["$fare", 0] }] } } } }
-      ]);
-      const outstandingPayments = outstandingAgg[0]?.total || 0;
-
-      // Period Revenue Summary
-      const todayRevenueAgg = await Trip.aggregate([
-        { $match: { status: "COMPLETED", completedAt: { $gte: todayStart } } },
-        { $group: { _id: null, total: { $sum: "$fare" } } }
-      ]);
-      const todayRevenue = todayRevenueAgg[0]?.total || 0;
-
-      const weeklyRevenueAgg = await Trip.aggregate([
-        { $match: { status: "COMPLETED", completedAt: { $gte: startOfWeek } } },
-        { $group: { _id: null, total: { $sum: "$fare" } } }
-      ]);
-      const weeklyRevenue = weeklyRevenueAgg[0]?.total || 0;
-
-      const monthlyRevenueAgg = await Trip.aggregate([
-        { $match: { status: "COMPLETED", completedAt: { $gte: startOfMonth } } },
-        { $group: { _id: null, total: { $sum: "$fare" } } }
-      ]);
-      const monthlyRevenue = monthlyRevenueAgg[0]?.total || 0;
-
-      const yearlyRevenueAgg = await Trip.aggregate([
-        { $match: { status: "COMPLETED", completedAt: { $gte: startOfYear } } },
-        { $group: { _id: null, total: { $sum: "$fare" } } }
-      ]);
-      const yearlyRevenue = yearlyRevenueAgg[0]?.total || 0;
-
-      const avgRidePrice = completedTrips > 0 ? (totalRevenue / completedTrips) : 0;
-
-      // 2. Monthly Ride Performance (12 Months Jan - Dec of current year)
-      const monthlyPerformanceAgg = await Trip.aggregate([
-        { $match: { createdAt: { $gte: startOfYear } } },
-        {
-          $group: {
-            _id: { $month: "$createdAt" },
-            requested: { $sum: 1 },
-            completed: {
-              $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] }
+      // Single-pass MongoDB Aggregations + Concurrent Promise.all Parallelization
+      const [
+        [facetResult],
+        totalDrivers,
+        activeDriversCount,
+        onTripDriversCount,
+        totalPassengers,
+        newPassengersThisWeek,
+        topDriversAgg,
+        recentTripsDocs,
+      ] = await Promise.all([
+        Trip.aggregate([
+          {
+            $facet: {
+              stats: [
+                {
+                  $group: {
+                    _id: null,
+                    totalTrips: { $sum: 1 },
+                    completedTrips: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] } },
+                    pendingRequests: { $sum: { $cond: [{ $in: ["$status", ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT"]] }, 1, 0] } },
+                    cancelledTrips: { $sum: { $cond: [{ $eq: ["$status", "CANCELLED"] }, 1, 0] } },
+                    rejectedTrips: { $sum: { $cond: [{ $eq: ["$status", "QUOTE_DENIED"] }, 1, 0] } },
+                    todayTrips: { $sum: { $cond: [{ $gte: ["$createdAt", todayStart] }, 1, 0] } },
+                    totalRevenue: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, "$fare", 0] } },
+                    outstandingPayments: {
+                      $sum: {
+                        $cond: [
+                          { $not: [{ $in: ["$status", ["COMPLETED", "CANCELLED", "QUOTE_DENIED"]] }] },
+                          { $ifNull: ["$quotedFare", { $ifNull: ["$fare", 0] }] },
+                          0
+                        ]
+                      }
+                    },
+                    todayRevenue: {
+                      $sum: {
+                        $cond: [
+                          { $and: [{ $eq: ["$status", "COMPLETED"] }, { $gte: ["$completedAt", todayStart] }] },
+                          "$fare",
+                          0
+                        ]
+                      }
+                    },
+                    weeklyRevenue: {
+                      $sum: {
+                        $cond: [
+                          { $and: [{ $eq: ["$status", "COMPLETED"] }, { $gte: ["$completedAt", startOfWeek] }] },
+                          "$fare",
+                          0
+                        ]
+                      }
+                    },
+                    monthlyRevenue: {
+                      $sum: {
+                        $cond: [
+                          { $and: [{ $eq: ["$status", "COMPLETED"] }, { $gte: ["$completedAt", startOfMonth] }] },
+                          "$fare",
+                          0
+                        ]
+                      }
+                    },
+                    yearlyRevenue: {
+                      $sum: {
+                        $cond: [
+                          { $and: [{ $eq: ["$status", "COMPLETED"] }, { $gte: ["$completedAt", startOfYear] }] },
+                          "$fare",
+                          0
+                        ]
+                      }
+                    }
+                  }
+                }
+              ],
+              monthlyPerformance: [
+                { $match: { createdAt: { $gte: startOfYear } } },
+                {
+                  $group: {
+                    _id: { $month: "$createdAt" },
+                    requested: { $sum: 1 },
+                    completed: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] } }
+                  }
+                }
+              ],
+              revenueOverview: [
+                { $match: { createdAt: { $gte: startOfYear } } },
+                {
+                  $group: {
+                    _id: { $month: "$createdAt" },
+                    monthlyRevenue: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, "$fare", 0] } },
+                    outstanding: {
+                      $sum: {
+                        $cond: [
+                          { $not: [{ $in: ["$status", ["COMPLETED", "CANCELLED", "QUOTE_DENIED"]] }] },
+                          { $ifNull: ["$quotedFare", { $ifNull: ["$fare", 0] }] },
+                          0
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
             }
           }
-        }
+        ]),
+        User.countDocuments({ role: "DRIVER", deletedAt: null }),
+        DriverProfile.countDocuments({ availabilityStatus: { $in: ["ONLINE", "ASSIGNED", "ON_TRIP"] } }),
+        DriverProfile.countDocuments({ availabilityStatus: "ON_TRIP" }),
+        User.countDocuments({ role: "PASSENGER", deletedAt: null }),
+        User.countDocuments({ role: "PASSENGER", deletedAt: null, createdAt: { $gte: startOfWeek } }),
+        Trip.aggregate([
+          { $match: { status: "COMPLETED", driverId: { $ne: null } } },
+          { $group: { _id: "$driverId", tripsCount: { $sum: 1 }, revenueSum: { $sum: "$fare" } } },
+          { $sort: { tripsCount: -1 } },
+          { $limit: 10 }
+        ]),
+        Trip.find()
+          .populate("passengerId", "name")
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .lean()
       ]);
-      
+
+      const s = facetResult?.stats?.[0] || {};
+      const totalTrips = s.totalTrips || 0;
+      const completedTrips = s.completedTrips || 0;
+      const pendingRequests = s.pendingRequests || 0;
+      const cancelledTrips = s.cancelledTrips || 0;
+      const rejectedTrips = s.rejectedTrips || 0;
+      const todayTrips = s.todayTrips || 0;
+      const totalRevenue = s.totalRevenue || 0;
+      const outstandingPayments = s.outstandingPayments || 0;
+      const todayRevenue = s.todayRevenue || 0;
+      const weeklyRevenue = s.weeklyRevenue || 0;
+      const monthlyRevenue = s.monthlyRevenue || 0;
+      const yearlyRevenue = s.yearlyRevenue || 0;
+
+      const avgRidePrice = completedTrips > 0 ? totalRevenue / completedTrips : 0;
+
+      // 2. Monthly Ride Performance (12 Months Jan - Dec)
       const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      const monthlyPerformanceMap = new Map(monthlyPerformanceAgg.map(m => [m._id, m]));
+      const monthlyPerformanceMap = new Map((facetResult?.monthlyPerformance || []).map((m: any) => [m._id, m]));
       const monthlyRidePerformance = monthNames.map((month, idx) => {
-        const item = monthlyPerformanceMap.get(idx + 1);
+        const item = monthlyPerformanceMap.get(idx + 1) as any;
         return {
           month,
           requested: item?.requested || 0,
@@ -758,30 +829,9 @@ export class AdminController {
       });
 
       // 3. Revenue Overview Monthly (12 Months)
-      const revenueOverviewAgg = await Trip.aggregate([
-        { $match: { createdAt: { $gte: startOfYear } } },
-        {
-          $group: {
-            _id: { $month: "$createdAt" },
-            monthlyRevenue: {
-              $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, "$fare", 0] }
-            },
-            outstanding: {
-              $sum: {
-                $cond: [
-                  { $not: [{ $in: ["$status", ["COMPLETED", "CANCELLED", "QUOTE_DENIED"]] }] },
-                  { $ifNull: ["$quotedFare", { $ifNull: ["$fare", 0] }] },
-                  0
-                ]
-
-              }
-            }
-          }
-        }
-      ]);
-      const revenueOverviewMap = new Map(revenueOverviewAgg.map(r => [r._id, r]));
+      const revenueOverviewMap = new Map((facetResult?.revenueOverview || []).map((r: any) => [r._id, r]));
       const revenueOverview = monthNames.map((month, idx) => {
-        const item = revenueOverviewMap.get(idx + 1);
+        const item = revenueOverviewMap.get(idx + 1) as any;
         return {
           month,
           monthlyRevenue: item?.monthlyRevenue || 0,
@@ -790,37 +840,23 @@ export class AdminController {
       });
 
       // 4. Top Drivers
-      const topDriversAgg = await Trip.aggregate([
-        { $match: { status: "COMPLETED", driverId: { $ne: null } } },
-        {
-          $group: {
-            _id: "$driverId",
-            tripsCount: { $sum: 1 },
-            revenueSum: { $sum: "$fare" }
-          }
-        },
-        { $sort: { tripsCount: -1 } },
-        { $limit: 10 }
-      ]);
-
-      const topDriverUserIds = topDriversAgg.map(d => d._id);
-      const driverUsers = await User.find({ _id: { $in: topDriverUserIds } }).lean();
-      const driverProfiles = await DriverProfile.find({ userId: { $in: topDriverUserIds } }).lean();
+      const topDriverUserIds = topDriversAgg.map((d: any) => d._id);
+      const driverUsers = await User.find({ _id: { $in: topDriverUserIds } }).select("name").lean();
+      const driverProfiles = await DriverProfile.find({ userId: { $in: topDriverUserIds } }).select("userId rating availabilityStatus completedTripsCount").lean();
       
-      const userMap = new Map(driverUsers.map(u => [u._id.toString(), u]));
-      const profileMap = new Map(driverProfiles.map(p => [p.userId.toString(), p]));
+      const userMap = new Map(driverUsers.map((u: any) => [u._id.toString(), u]));
+      const profileMap = new Map(driverProfiles.map((p: any) => [p.userId.toString(), p]));
 
-      let topDrivers = topDriversAgg.map(item => {
+      let topDrivers = topDriversAgg.map((item: any) => {
         const uidStr = item._id.toString();
         const u = userMap.get(uidStr);
         const p = profileMap.get(uidStr);
         const name = u?.name || "Driver";
-        const initials = name.split(" ").map(n => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
+        const initials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
         
         let statusStr = "Active";
         if (p?.availabilityStatus === "ASSIGNED") statusStr = "On Trip";
         else if (p?.availabilityStatus === "OFFLINE" || p?.availabilityStatus === "UNAVAILABLE") statusStr = "Off Duty";
-
 
         return {
           id: uidStr,
@@ -834,18 +870,18 @@ export class AdminController {
         };
       });
 
-      // Fallback: If no trips completed yet, fetch approved drivers
+      // Fallback: If no completed trips yet, fetch approved drivers
       if (topDrivers.length === 0) {
         const approvedProfiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).limit(6).lean();
-        const appUserIds = approvedProfiles.map(p => p.userId);
-        const appUsers = await User.find({ _id: { $in: appUserIds } }).lean();
-        const appUserMap = new Map(appUsers.map(u => [u._id.toString(), u]));
+        const appUserIds = approvedProfiles.map((p: any) => p.userId);
+        const appUsers = await User.find({ _id: { $in: appUserIds } }).select("name").lean();
+        const appUserMap = new Map(appUsers.map((u: any) => [u._id.toString(), u]));
 
-        topDrivers = approvedProfiles.map(p => {
+        topDrivers = approvedProfiles.map((p: any) => {
           const uidStr = p.userId.toString();
           const u = appUserMap.get(uidStr);
           const name = u?.name || "Driver";
-          const initials = name.split(" ").map(n => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
+          const initials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
           let statusStr = "Active";
           if (p.availabilityStatus === "ASSIGNED") statusStr = "On Trip";
           else if (p.availabilityStatus === "OFFLINE" || p.availabilityStatus === "UNAVAILABLE") statusStr = "Off Duty";
@@ -865,12 +901,6 @@ export class AdminController {
       }
 
       // 5. Recent Ride Requests
-      const recentTripsDocs = await Trip.find()
-        .populate("passengerId", "name")
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .lean();
-
       const colors = ["#082552", "#7439ed", "#2665e7", "#dc2626", "#0794b5", "#10ac7b"];
       const recentRideRequests = recentTripsDocs.map((t: any, idx: number) => {
         const rideId = `FT-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
@@ -900,16 +930,14 @@ export class AdminController {
         ];
       });
 
-
       res.status(200).json({
         success: true,
         data: {
           metrics: {
-            todayTrips: await Trip.countDocuments({ createdAt: { $gte: todayStart } }),
+            todayTrips,
             pendingRequests,
             pendingTrips: pendingRequests,
             activeDrivers: activeDriversCount,
-
             onTripDrivers: onTripDriversCount,
             completedTrips,
             cancelledTrips,

@@ -219,5 +219,9 @@ const tripSchema = new Schema<ITrip>(
 );
 
 tripSchema.index({ status: 1, driverId: 1 });
+tripSchema.index({ status: 1, createdAt: -1 });
+tripSchema.index({ completedAt: -1, status: 1 });
+tripSchema.index({ createdAt: -1 });
 
 export const Trip = mongoose.model<ITrip>("Trip", tripSchema);
+
