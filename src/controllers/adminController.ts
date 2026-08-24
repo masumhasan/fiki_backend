@@ -901,7 +901,9 @@ export class AdminController {
           metrics: {
             todayTrips: await Trip.countDocuments({ createdAt: { $gte: todayStart } }),
             pendingRequests,
+            pendingTrips: pendingRequests,
             activeDrivers: activeDriversCount,
+
             onTripDrivers: onTripDriversCount,
             completedTrips,
             cancelledTrips,
