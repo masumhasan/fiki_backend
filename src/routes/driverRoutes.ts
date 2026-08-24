@@ -18,6 +18,7 @@ router.patch("/me/trips/:id/notes", (req, res, next) => driverController.updateT
 router.get("/me/earnings", (req, res, next) => driverController.getEarnings(req, res, next));
 
 router.get("/me/shifts/today", (req, res, next) => driverController.getTodayShift(req, res, next));
+router.get("/me/schedule-summary", (req, res, next) => driverController.getScheduleSummary(req, res, next));
 router.post("/me/shifts/start", (req, res, next) => driverController.startShift(req, res, next));
 router.post("/me/shifts/end", (req, res, next) => driverController.endShift(req, res, next));
 

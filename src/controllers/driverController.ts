@@ -417,6 +417,164 @@ export class DriverController {
     }
   }
 
+  async getScheduleSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const driverId = req.user.userId;
+      const now = new Date();
+      const todayStr = now.toISOString().split("T")[0];
+
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayEnd = new Date(todayStart);
+      todayEnd.setDate(todayEnd.getDate() + 1);
+
+      // Start of current week (Monday)
+      const currentDayOfWeek = now.getDay();
+      const distanceToMon = (currentDayOfWeek + 6) % 7;
+      const startOfWeek = new Date(todayStart);
+      startOfWeek.setDate(startOfWeek.getDate() - distanceToMon);
+
+      // Fetch today's trips & shift & week shifts concurrently
+      const [todayTrips, todayShift, weekShifts] = await Promise.all([
+        Trip.find({
+          driverId,
+          $or: [
+            { pickupDate: todayStr },
+            { createdAt: { $gte: todayStart, $lt: todayEnd } }
+          ]
+        }).lean(),
+
+        DriverShift.findOne({
+          driverId,
+          $or: [
+            { status: "IN_PROGRESS" },
+            { shiftDate: todayStr }
+          ]
+        }).sort({ createdAt: -1 }).lean(),
+
+        DriverShift.find({
+          driverId,
+          createdAt: { $gte: startOfWeek }
+        }).lean()
+      ]);
+
+      // 1. Today's Trip Summary
+      const totalTripsCount = todayTrips.length;
+      const completedTripsCount = todayTrips.filter((t: any) => t.status === "COMPLETED").length;
+      const inProgressTripsCount = todayTrips.filter((t: any) => ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"].includes(t.status)).length;
+      const remainingTripsCount = Math.max(0, totalTripsCount - completedTripsCount - inProgressTripsCount);
+
+      const tripSummary = {
+        totalTrips: totalTripsCount,
+        completed: completedTripsCount,
+        inProgress: inProgressTripsCount,
+        remaining: remainingTripsCount,
+      };
+
+      // 2. Upcoming Schedule (Next 5 Days starting tomorrow)
+      const dayAbbrs = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+      const upcomingSchedule = [];
+      for (let i = 1; i <= 5; i++) {
+        const d = new Date(todayStart);
+        d.setDate(d.getDate() + i);
+        upcomingSchedule.push({
+          day: dayAbbrs[d.getDay()],
+          date: String(d.getDate()),
+          hours: "07:00 AM – 03:00 PM",
+          status: "Scheduled",
+        });
+      }
+
+      // 3. Weekly Schedule (7 Days of Current Week: Mon - Sun)
+      const fullDayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const monthShortNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      
+      const shiftMap = new Map(weekShifts.map((s: any) => [s.shiftDate, s]));
+
+      const weeklySchedule = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startOfWeek);
+        d.setDate(d.getDate() + i);
+        const dateStr = d.toISOString().split("T")[0];
+        const dayName = fullDayNames[d.getDay()];
+        const formattedDate = `${monthShortNames[d.getMonth()]} ${d.getDate()}`;
+
+        const s = shiftMap.get(dateStr) as any;
+
+        let shiftHours = "07:00 AM – 03:00 PM";
+        let totalHours = "8h";
+        let attendance = "Pending";
+        let approval = "Pending";
+
+        if (s) {
+          if (s.startedAt && s.endedAt) {
+            const startT = new Date(s.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            const endT = new Date(s.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            shiftHours = `${startT} – ${endT}`;
+          } else if (s.startedAt) {
+            const startT = new Date(s.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            shiftHours = `${startT} – In Progress`;
+          }
+
+          if (s.totalHoursText) {
+            totalHours = s.totalHoursText;
+          } else if (s.status === "IN_PROGRESS" && s.startedAt) {
+            const diffMs = Date.now() - new Date(s.startedAt).getTime();
+            const mins = Math.max(1, Math.round(diffMs / 60000));
+            totalHours = `${Math.floor(mins / 60)}h ${mins % 60}m`;
+          }
+
+          if (s.status === "COMPLETED") {
+            attendance = "Present";
+            approval = "Approved";
+          } else if (s.status === "IN_PROGRESS") {
+            attendance = "In Progress";
+            approval = "Pending";
+          }
+        } else {
+          if (d < todayStart) {
+            attendance = "Off";
+            approval = "Approved";
+            totalHours = "—";
+          } else if (d.getTime() === todayStart.getTime()) {
+            attendance = todayShift?.status === "IN_PROGRESS" ? "In Progress" : "Pending";
+            approval = "Pending";
+            totalHours = "8h";
+          } else {
+            attendance = "Scheduled";
+            approval = "Pending";
+            totalHours = "8h";
+          }
+        }
+
+        weeklySchedule.push({
+          day: dayName,
+          date: formattedDate,
+          shiftHours,
+          total: totalHours,
+          attendance,
+          approval,
+        });
+      }
+
+      res.status(200).json({
+        success: true,
+        data: {
+          todayShift: todayShift || null,
+          tripSummary,
+          upcomingSchedule,
+          weeklySchedule,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async startShift(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {
