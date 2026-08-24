@@ -778,6 +778,26 @@ export class AdminController {
                     }
                   }
                 }
+              ],
+              weeklyTripVolume: [
+                { $match: { createdAt: { $gte: startOfWeek } } },
+                {
+                  $group: {
+                    _id: { $dayOfWeek: "$createdAt" },
+                    total: { $sum: 1 },
+                    completed: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] } }
+                  }
+                }
+              ],
+              monthlyTripVolume: [
+                { $match: { createdAt: { $gte: startOfMonth } } },
+                {
+                  $group: {
+                    _id: { $ceil: { $divide: [{ $dayOfMonth: "$createdAt" }, 7] } },
+                    total: { $sum: 1 },
+                    completed: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] } }
+                  }
+                }
               ]
             }
           }
@@ -930,6 +950,93 @@ export class AdminController {
         ];
       });
 
+      // 6. Trip Volume Datasets (Weekly, Monthly, Yearly)
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const dayOrder = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+      const weeklyVolumeMap = new Map((facetResult?.weeklyTripVolume || []).map((w: any) => [dayNames[w._id - 1], w]));
+      const weeklyTripVolume = dayOrder.map((day) => {
+        const item = weeklyVolumeMap.get(day) as any;
+        return {
+          date: day,
+          total: item?.total || 0,
+          completed: item?.completed || 0,
+        };
+      });
+
+      const monthlyVolumeMap = new Map((facetResult?.monthlyTripVolume || []).map((m: any) => [m._id, m]));
+      const monthlyTripVolume = [1, 2, 3, 4].map((w) => {
+        const item = monthlyVolumeMap.get(w) as any;
+        return {
+          date: `Week ${w}`,
+          total: item?.total || 0,
+          completed: item?.completed || 0,
+        };
+      });
+
+      const yearlyTripVolume = monthNames.map((month, idx) => {
+        const item = monthlyPerformanceMap.get(idx + 1) as any;
+        return {
+          date: month,
+          total: item?.requested || 0,
+          completed: item?.completed || 0,
+        };
+      });
+
+      // 7. Driver Status List for Dashboard Card
+      const allApprovedProfiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).limit(10).lean();
+      const approvedUserIds = allApprovedProfiles.map((p: any) => p.userId);
+      const approvedUsers = await User.find({ _id: { $in: approvedUserIds } }).select("name").lean();
+      const approvedUserMap = new Map(approvedUsers.map((u: any) => [u._id.toString(), u]));
+
+      const driverStatusColors = ["#10ac7b", "#f39200", "#2563eb", "#8345ed", "#0794b5"];
+      const driverStatus = allApprovedProfiles.map((p: any, idx: number) => {
+        const uidStr = p.userId.toString();
+        const u = approvedUserMap.get(uidStr);
+        const name = u?.name || "Driver";
+        const initials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
+        
+        let statusStr = "On Duty";
+        let color = driverStatusColors[idx % driverStatusColors.length];
+        if (p.availabilityStatus === "ASSIGNED" || p.availabilityStatus === "ON_TRIP") {
+          statusStr = "In Progress";
+          color = "#f39200";
+        } else if (p.availabilityStatus === "OFFLINE" || p.availabilityStatus === "UNAVAILABLE") {
+          statusStr = "Off Duty";
+          color = "#6b7280";
+        }
+
+        return {
+          id: uidStr,
+          initials,
+          name,
+          vehicle: "BMW M3 2022",
+          status: statusStr,
+          color,
+        };
+      });
+
+      // 8. Activity Feed List for Dashboard Card
+      const activityFeed = recentTripsDocs.slice(0, 5).map((t: any) => {
+        const rideId = `T-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
+        const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
+        let title = `Trip ${rideId} requested by ${passengerName}`;
+        let color = "#2563eb";
+        if (t.status === "COMPLETED") {
+          title = `Trip ${rideId} marked as completed`;
+          color = "#10ac7b";
+        } else if (["ACCEPTED", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"].includes(t.status)) {
+          title = `Trip ${rideId} updated to in-progress`;
+          color = "#f39200";
+        } else if (t.status === "CANCELLED" || t.status === "QUOTE_DENIED") {
+          title = `Trip ${rideId} was cancelled`;
+          color = "#dc2626";
+        }
+        const diffMs = Date.now() - new Date(t.createdAt).getTime();
+        const mins = Math.max(1, Math.floor(diffMs / 60000));
+        const time = mins < 60 ? `${mins} mins ago` : `${Math.floor(mins / 60)} hours ago`;
+        return { title, time, color };
+      });
+
       res.status(200).json({
         success: true,
         data: {
@@ -957,12 +1064,18 @@ export class AdminController {
             outstandingBalance: outstandingPayments,
             avgRidePrice,
           },
+          weeklyTripVolume,
+          monthlyTripVolume,
+          yearlyTripVolume,
+          driverStatus,
+          activityFeed,
           monthlyRidePerformance,
           revenueOverview,
           topDrivers,
           recentRideRequests,
         },
       });
+
     } catch (error) {
       next(error);
     }
