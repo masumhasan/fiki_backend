@@ -265,12 +265,18 @@ export class DriverController {
       }
 
       trip.status = status;
-      if (status === "IN_PROGRESS") {
-        trip.startedAt = new Date();
+      const statusNow = new Date();
+      if (status === "DRIVER_ARRIVING") {
+        trip.arrivingAt = statusNow;
+      } else if (status === "DRIVER_ARRIVED") {
+        trip.arrivedAt = statusNow;
+      } else if (status === "IN_PROGRESS") {
+        trip.inProgressAt = statusNow;
+        if (!trip.startedAt) trip.startedAt = statusNow;
       } else if (status === "COMPLETED") {
-        trip.completedAt = new Date();
+        if (!trip.completedAt) trip.completedAt = statusNow;
       } else if (status === "CANCELLED") {
-        trip.cancelledAt = new Date();
+        if (!trip.cancelledAt) trip.cancelledAt = statusNow;
       }
 
       await trip.save();

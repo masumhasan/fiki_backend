@@ -431,6 +431,9 @@ export class AdminController {
 
       trip.driverId = driver._id;
       trip.status = "ACCEPTED";
+      const now = new Date();
+      if (!trip.assignedAt) trip.assignedAt = now;
+      if (!trip.acceptedAt) trip.acceptedAt = now;
       await trip.save();
 
       await DriverProfile.findOneAndUpdate(

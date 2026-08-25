@@ -36,6 +36,11 @@ export interface ITrip extends Document {
   counterOfferedAt?: Date;
   counterOfferNote?: string;
   scheduledTime?: Date;
+  assignedAt?: Date;
+  acceptedAt?: Date;
+  arrivingAt?: Date;
+  arrivedAt?: Date;
+  inProgressAt?: Date;
   startedAt?: Date;
   completedAt?: Date;
   cancelledAt?: Date;
@@ -150,6 +155,11 @@ const tripSchema = new Schema<ITrip>(
     counterOfferedAt: { type: Date },
     counterOfferNote: { type: String },
     scheduledTime: { type: Date },
+    assignedAt: { type: Date },
+    acceptedAt: { type: Date },
+    arrivingAt: { type: Date },
+    arrivedAt: { type: Date },
+    inProgressAt: { type: Date },
     startedAt: { type: Date },
     completedAt: { type: Date },
     cancelledAt: { type: Date },
