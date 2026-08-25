@@ -1343,8 +1343,9 @@ export class AdminController {
 
         const hourlyRate = p.hourlyRate ?? 14.0;
         const approvedHours = p.approvedHours ?? 80.0;
+        const tripBonusRate = p.tripBonusRate ?? 3.0;
         const completedTrips = tripCountMap.get(uidStr) || p.completedTripsCount || 0;
-        const tripBonus = completedTrips * 3.0;
+        const tripBonus = completedTrips * tripBonusRate;
         const regularWages = hourlyRate * approvedHours;
         const grossEarnings = regularWages + tripBonus;
 
@@ -1357,6 +1358,7 @@ export class AdminController {
           licensePlate: p.vehicle?.licensePlate || "N/A",
           hourlyRate,
           approvedHours,
+          tripBonusRate,
           completedTrips,
           tripBonus,
           regularWages,
@@ -1396,7 +1398,7 @@ export class AdminController {
         return;
       }
 
-      const { hourlyRate, approvedHours, payrollStatus } = req.body;
+      const { hourlyRate, approvedHours, tripBonusRate, payrollStatus } = req.body;
 
       const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(driverId) });
       if (!profile) {
@@ -1410,6 +1412,9 @@ export class AdminController {
       if (typeof approvedHours === "number" && approvedHours >= 0) {
         profile.approvedHours = approvedHours;
       }
+      if (typeof tripBonusRate === "number" && tripBonusRate >= 0) {
+        profile.tripBonusRate = tripBonusRate;
+      }
       if (payrollStatus && typeof payrollStatus === "string") {
         profile.payrollStatus = payrollStatus;
       }
@@ -1422,6 +1427,7 @@ export class AdminController {
           driverId,
           hourlyRate: profile.hourlyRate,
           approvedHours: profile.approvedHours,
+          tripBonusRate: profile.tripBonusRate,
           payrollStatus: profile.payrollStatus,
         },
       });

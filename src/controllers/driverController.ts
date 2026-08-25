@@ -368,6 +368,7 @@ export class DriverController {
       
       const hourlyRate = profile?.hourlyRate ?? 14.0;
       const approvedHours = profile?.approvedHours ?? 80.0;
+      const tripBonusPerRide = profile?.tripBonusRate ?? 3.0;
       const payrollStatus = profile?.payrollStatus || "Approved";
 
       // 14-day current pay period calculation window
@@ -382,7 +383,6 @@ export class DriverController {
       }).sort({ createdAt: -1 }).lean();
 
       const completedTripsCount = completedTrips.length;
-      const tripBonusPerRide = 3.0;
       const tripBonus = completedTripsCount * tripBonusPerRide;
       const regularWages = hourlyRate * approvedHours;
       const grossEarnings = regularWages + tripBonus;
@@ -412,7 +412,7 @@ export class DriverController {
           pickup,
           destination: dropoff,
           status: "Completed",
-          bonus: "+$3.00",
+          bonus: `+$${tripBonusPerRide.toFixed(2)}`,
         };
       });
 
@@ -423,6 +423,7 @@ export class DriverController {
           approvedHours,
           completedTripsCount,
           tripBonusPerRide,
+          tripBonusRate: tripBonusPerRide,
           tripBonus,
           regularWages,
           grossEarnings,
