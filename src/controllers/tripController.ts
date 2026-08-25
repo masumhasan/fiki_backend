@@ -65,7 +65,7 @@ const createRideSchema = z.object({
 
   // Signature
   signature: z.string().min(1, "Signature is required"),
-  signatureDate: z.string().min(1, "Date is required"),
+  signatureDate: z.string().optional().or(z.literal("")).or(z.null()),
   printedName: z.string().min(2, "Printed name is required"),
   relationshipToPassenger: z.string().optional().or(z.null()),
   fare: z.number().positive().optional(),
