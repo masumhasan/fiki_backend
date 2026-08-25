@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { z } from "zod";
 import { AuditLog } from "../models/AuditLog.js";
 import { DriverProfile } from "../models/DriverProfile.js";
+import { DriverShift } from "../models/DriverShift.js";
 import { Trip } from "../models/Trip.js";
 import { User } from "../models/User.js";
 import { Setting } from "../models/Setting.js";
@@ -1446,6 +1447,218 @@ export class AdminController {
       res.status(200).json({
         success: true,
         data: { dispatchNumber: setting.value },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getScheduleOverview(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      // Accept weekStart query param or default to current week's Monday
+      let startOfWeek: Date;
+      if (req.query.weekStart && typeof req.query.weekStart === "string") {
+        const parts = req.query.weekStart.split("-").map(Number);
+        if (parts.length === 3) {
+          startOfWeek = new Date(parts[0], parts[1] - 1, parts[2]);
+        } else {
+          startOfWeek = new Date(todayStart);
+        }
+      } else {
+        const currentDayOfWeek = now.getDay(); // 0=Sun, 1=Mon...
+        const distanceToMon = (currentDayOfWeek + 6) % 7;
+        startOfWeek = new Date(todayStart);
+        startOfWeek.setDate(startOfWeek.getDate() - distanceToMon);
+      }
+
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(endOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+
+      // Month names & Day names formatting
+      const monthShortNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const dayAbbrKeys = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const dayHeaderNames = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+
+      // Top range label e.g. "Jul 14 – Jul 20, 2026"
+      const startMonth = monthShortNames[startOfWeek.getMonth()];
+      const endMonth = monthShortNames[endOfWeek.getMonth()];
+      const weekRangeLabel = `${startMonth} ${startOfWeek.getDate()} – ${endMonth} ${endOfWeek.getDate()}, ${endOfWeek.getFullYear()}`;
+
+      // Build 7 days headers array
+      const weekDays: Array<{ day: string; date: string; dateStr: string; dayOfWeek: number }> = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startOfWeek);
+        d.setDate(d.getDate() + i);
+        weekDays.push({
+          day: dayHeaderNames[i],
+          date: `${monthShortNames[d.getMonth()]} ${d.getDate()}`,
+          dateStr: d.toISOString().split("T")[0],
+          dayOfWeek: d.getDay(),
+        });
+      }
+
+      // Query approved drivers and all shifts in current week
+      const profiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).lean();
+      const userIds = profiles.map((p: any) => p.userId);
+      const users = await User.find({ _id: { $in: userIds } }).select("name email phone").lean();
+      const userMap = new Map(users.map((u: any) => [u._id.toString(), u]));
+
+      const weekShifts = await DriverShift.find({
+        driverId: { $in: userIds },
+        createdAt: { $gte: startOfWeek, $lte: endOfWeek }
+      }).lean();
+
+      // Helper map for shifts: key = `${driverId}_${shiftDate}`
+      const shiftMap = new Map();
+      weekShifts.forEach((s: any) => {
+        const key = `${s.driverId.toString()}_${s.shiftDate}`;
+        shiftMap.set(key, s);
+      });
+
+      // Process each driver's 7 days schedule & status
+      const avatarTones = [
+        "bg-blue-600", "bg-emerald-600", "bg-violet-600", "bg-amber-600",
+        "bg-rose-600", "bg-[#173d76]", "bg-teal-600", "bg-indigo-600"
+      ];
+
+      let scheduledTodayCount = 0;
+      let workingNowCount = 0;
+      let offTodayCount = 0;
+      let scheduleIssuesCount = 0;
+
+      const todayStr = todayStart.toISOString().split("T")[0];
+
+      const drivers = profiles.map((p: any, pIdx: number) => {
+        const uidStr = p.userId.toString();
+        const u = userMap.get(uidStr);
+        const name = u?.name || "Driver";
+        const initials = name.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase();
+        const tone = avatarTones[pIdx % avatarTones.length];
+
+        const weeklyScheduleConfig = p.weeklySchedule || [];
+        const configMap = new Map(weeklyScheduleConfig.map((s: any) => [s.day, s]));
+
+        let totalWeekMinutes = 0;
+        const shifts = weekDays.map((wd) => {
+          const dayKey = dayAbbrKeys[wd.dayOfWeek];
+          const cfg = configMap.get(dayKey) as any;
+          const isWorking = cfg ? cfg.working !== false : (wd.dayOfWeek >= 1 && wd.dayOfWeek <= 5);
+          const startTimeStr = cfg?.startTime || "08:00 AM";
+          const endTimeStr = cfg?.endTime || "04:00 PM";
+
+          const shiftKey = `${uidStr}_${wd.dateStr}`;
+          const actualShift = shiftMap.get(shiftKey);
+
+          let status = "SCHEDULED";
+          let label = "Scheduled";
+          let toneClass = "bg-amber-100 border-amber-300 text-amber-800"; // Scheduled: --color-amber-100
+          let hoursText = `${startTimeStr} – ${endTimeStr}`;
+          let workDuration = "8h 00m";
+
+          const dayDate = new Date(wd.dateStr);
+
+          // Parse scheduled start time Date for comparison
+          const [timePart, period] = startTimeStr.split(" ");
+          const [hStr, mStr] = (timePart || "08:00").split(":");
+          let scheduledHour = parseInt(hStr || "8", 10);
+          if (period === "PM" && scheduledHour < 12) scheduledHour += 12;
+          if (period === "AM" && scheduledHour === 12) scheduledHour = 0;
+          const scheduledStartDate = new Date(dayDate);
+          scheduledStartDate.setHours(scheduledHour, parseInt(mStr || "0", 10), 0, 0);
+
+          if (!isWorking) {
+            status = "DAY_OFF";
+            label = "Day off";
+            toneClass = "bg-slate-100 border-slate-200 text-slate-500"; // Day off: --color-slate-100
+            hoursText = "Day off";
+            workDuration = "—";
+          } else {
+            totalWeekMinutes += 8 * 60; // 8 hours scheduled
+
+            if (actualShift && actualShift.startedAt) {
+              const startedDate = new Date(actualShift.startedAt);
+              const isLate = startedDate.getTime() > scheduledStartDate.getTime() + 5 * 60 * 1000; // 5m grace period
+
+              if (isLate) {
+                status = "LATE";
+                label = "Late";
+                toneClass = "bg-orange-100 border-orange-300 text-orange-800"; // Late: Less reddish than Absent
+              } else {
+                status = "PRESENT";
+                label = "Present";
+                toneClass = "bg-emerald-100 border-emerald-300 text-emerald-800"; // Present: --color-emerald-100
+              }
+            } else {
+              // No shift started yet
+              if (now.getTime() > scheduledStartDate.getTime()) {
+                status = "ABSENT";
+                label = "Absent";
+                toneClass = "bg-rose-100 border-rose-300 text-rose-800"; // Absent: Reddish
+              } else {
+                status = "SCHEDULED";
+                label = "Scheduled";
+                toneClass = "bg-amber-100 border-amber-300 text-amber-800"; // Scheduled: --color-amber-100
+              }
+            }
+          }
+
+          // Count today's metrics
+          if (wd.dateStr === todayStr) {
+            if (isWorking) scheduledTodayCount++;
+            else offTodayCount++;
+
+            if (actualShift?.status === "IN_PROGRESS") workingNowCount++;
+            if (status === "ABSENT" || status === "LATE") scheduleIssuesCount++;
+          }
+
+          return {
+            dateStr: wd.dateStr,
+            day: wd.day,
+            status,
+            label,
+            toneClass,
+            startTime: startTimeStr,
+            endTime: endTimeStr,
+            hoursText,
+            workDuration,
+          };
+        });
+
+        const totalHours = Math.floor(totalWeekMinutes / 60);
+
+        return {
+          id: p._id.toString(),
+          driverId: uidStr,
+          name,
+          email: u?.email || "",
+          phone: u?.phone || "",
+          initials,
+          tone,
+          total: `${totalHours}h 00m`,
+          shifts,
+          weeklySchedule: p.weeklySchedule,
+        };
+      });
+
+      res.status(200).json({
+        success: true,
+        data: {
+          weekStartStr: startOfWeek.toISOString().split("T")[0],
+          weekEndStr: endOfWeek.toISOString().split("T")[0],
+          weekRangeLabel,
+          weekDays,
+          metrics: {
+            scheduledToday: scheduledTodayCount,
+            workingNow: workingNowCount,
+            offToday: offTodayCount,
+            scheduleIssues: scheduleIssuesCount,
+          },
+          drivers,
+        },
       });
     } catch (error) {
       next(error);

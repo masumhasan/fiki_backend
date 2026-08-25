@@ -30,6 +30,7 @@ router.post("/trips/:id/counter-response", (req, res, next) => adminController.r
 router.get("/analytics", (req, res, next) => adminController.getAnalytics(req, res, next));
 router.get("/earnings", (req, res, next) => adminController.getDriverEarningsList(req, res, next));
 router.patch("/earnings/:driverId", (req, res, next) => adminController.updateDriverEarnings(req, res, next));
+router.get("/schedule-overview", (req, res, next) => adminController.getScheduleOverview(req, res, next));
 router.put("/settings/dispatch-number", (req, res, next) => adminController.updateDispatchNumber(req, res, next));
 
 router.get("/vehicle-reports", (req, res, next) => fleetController.getVehicleReports(req, res, next));
