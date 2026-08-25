@@ -78,6 +78,7 @@ export interface ITrip extends Document {
   returnDate?: string;
   returnPickupTime?: string;
   driverNotes?: string;
+  driverShiftNotes?: string;
 
   // Mobility & Special Needs
   mobilityOptions?: string[];
@@ -195,6 +196,7 @@ const tripSchema = new Schema<ITrip>(
     returnDate: { type: String },
     returnPickupTime: { type: String },
     driverNotes: { type: String },
+    driverShiftNotes: { type: String },
 
     // Mobility & Special Needs
     mobilityOptions: { type: [String] },

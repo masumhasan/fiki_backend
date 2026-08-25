@@ -353,7 +353,7 @@ export class DriverController {
         return;
       }
 
-      trip.driverNotes = driverNotes || "";
+      trip.driverShiftNotes = driverNotes || "";
       await trip.save();
 
       res.status(200).json({ success: true, data: trip });
