@@ -173,7 +173,7 @@ export class DriverController {
 
       const trips = await Trip.find(filter)
         .populate("passengerId", "name email phone")
-        .sort({ createdAt: -1 })
+        .sort({ scheduledTime: 1, startDate: 1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean();
