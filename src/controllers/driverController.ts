@@ -200,7 +200,7 @@ export class DriverController {
       }
 
       const id = req.params.id as string;
-      const { status } = req.body;
+      const { status, receiverSignature, receiverName, receiverRelationship } = req.body;
 
       const validStatuses: TripStatus[] = ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED"];
       if (!status || !validStatuses.includes(status)) {
@@ -215,6 +215,24 @@ export class DriverController {
       if (!trip) {
         res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found or not assigned to driver" } });
         return;
+      }
+
+      // Enforce Hand to Hand drop-off signature requirement if trip requires Hand to Hand
+      const isHandToHand = Array.isArray(trip.mobilityOptions) &&
+        trip.mobilityOptions.some((opt: string) => opt.toLowerCase().includes("hand"));
+
+      if (status === "COMPLETED" && isHandToHand) {
+        const sig = receiverSignature || trip.receiverSignature;
+        if (!sig) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: "RECEIVER_SIGNATURE_REQUIRED",
+              message: "Hand to Hand drop-off requires the receiver's digital signature before completing the trip.",
+            },
+          });
+          return;
+        }
       }
 
       // Enforce that driver has an active shift started today before performing trip status updates
@@ -275,6 +293,10 @@ export class DriverController {
         if (!trip.startedAt) trip.startedAt = statusNow;
       } else if (status === "COMPLETED") {
         if (!trip.completedAt) trip.completedAt = statusNow;
+        if (receiverSignature) trip.receiverSignature = receiverSignature;
+        if (receiverName) trip.receiverName = receiverName;
+        if (receiverRelationship) trip.receiverRelationship = receiverRelationship;
+        if (receiverSignature && !trip.receiverSignedAt) trip.receiverSignedAt = statusNow;
       } else if (status === "CANCELLED") {
         if (!trip.cancelledAt) trip.cancelledAt = statusNow;
       }

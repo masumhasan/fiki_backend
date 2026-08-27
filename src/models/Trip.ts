@@ -106,6 +106,12 @@ export interface ITrip extends Document {
   signatureDate?: string;
   printedName?: string;
   relationshipToPassenger?: string;
+
+  // Hand to Hand Receiver Signature
+  receiverSignature?: string;
+  receiverName?: string;
+  receiverRelationship?: string;
+  receiverSignedAt?: Date;
 }
 
 const tripSchema = new Schema<ITrip>(
@@ -224,6 +230,12 @@ const tripSchema = new Schema<ITrip>(
     signatureDate: { type: String },
     printedName: { type: String },
     relationshipToPassenger: { type: String },
+
+    // Hand to Hand Receiver Signature
+    receiverSignature: { type: String },
+    receiverName: { type: String },
+    receiverRelationship: { type: String },
+    receiverSignedAt: { type: Date },
   },
   {
     timestamps: true,
