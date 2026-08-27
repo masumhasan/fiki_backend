@@ -65,6 +65,8 @@ export interface ITrip extends Document {
   // Trip Information
   tripType?: string;
   schedule?: string;
+  startDate?: string;
+  endDate?: string;
   pickupDate?: string;
   pickupTime?: string;
   appointmentTime?: string;
@@ -189,6 +191,8 @@ const tripSchema = new Schema<ITrip>(
     // Trip Information
     tripType: { type: String },
     schedule: { type: String },
+    startDate: { type: String },
+    endDate: { type: String },
     pickupDate: { type: String },
     pickupTime: { type: String },
     appointmentTime: { type: String },

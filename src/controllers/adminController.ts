@@ -34,7 +34,9 @@ const createTripSchema = z.object({
   schedule: z.enum(["one-time", "recurring"]),
   pickupAddress: z.string().min(5, "Pickup address is required"),
   destinationAddress: z.string().min(5, "Destination address is required"),
-  pickupDate: z.string().min(1, "Pickup date is required"),
+  startDate: z.string().optional().or(z.null()),
+  endDate: z.string().optional().or(z.null()),
+  pickupDate: z.string().optional().or(z.null()),
   pickupTime: z.string().min(1, "Pickup time is required"),
   appointmentTime: z.string().optional().or(z.literal("")).or(z.null()),
 
@@ -341,7 +343,9 @@ export class AdminController {
         });
       }
 
-      const scheduledTime = tripData.pickupDate ? new Date(`${tripData.pickupDate}T${tripData.pickupTime || "09:00"}`) : undefined;
+      const sDate = tripData.startDate || tripData.pickupDate || tripData.recurringStartDate;
+      const eDate = tripData.endDate || tripData.returnDate || tripData.recurringEndDate;
+      const scheduledTime = sDate ? new Date(`${sDate}T${tripData.pickupTime || "09:00"}`) : undefined;
 
       const { fare, pickupAddress, destinationAddress, ...restOfTripData } = tripData;
 
@@ -352,10 +356,14 @@ export class AdminController {
         fare: fare,
         quotedFare: fare,
         quotedAt: new Date(),
-        // Since there is no negotiation for manual requests, status is set to QUOTE_ACCEPTED directly
-        // making it ready for driver assignment.
         status: "QUOTE_ACCEPTED",
         scheduledTime,
+        startDate: sDate,
+        endDate: eDate,
+        pickupDate: sDate || tripData.pickupDate,
+        returnDate: eDate || tripData.returnDate,
+        recurringStartDate: sDate || tripData.recurringStartDate,
+        recurringEndDate: eDate || tripData.recurringEndDate,
         ...restOfTripData,
       });
 
