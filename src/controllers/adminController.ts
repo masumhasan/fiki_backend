@@ -98,6 +98,44 @@ const respondToCounterOfferSchema = z.object({
   }),
 });
 
+async function resolveDriverProfile(id: string) {
+  if (!mongoose.Types.ObjectId.isValid(id)) return null;
+  const objId = new mongoose.Types.ObjectId(id);
+
+  // 1. Check DriverProfile by _id or userId
+  let profile = await DriverProfile.findOne({
+    $or: [{ _id: objId }, { userId: objId }],
+  });
+
+  if (profile) return profile;
+
+  // 2. Check DriverApplication by _id
+  const app = await mongoose.model("DriverApplication").findById(objId).catch(() => null);
+  if (app) {
+    if (app.userId) {
+      profile = await DriverProfile.findOne({ userId: app.userId });
+      if (profile) return profile;
+    }
+    if (app.driverProfileId) {
+      profile = await DriverProfile.findById(app.driverProfileId);
+      if (profile) return profile;
+    }
+  }
+
+  // 3. Check User by _id with role DRIVER and auto-create DriverProfile if missing
+  const user = await User.findById(objId);
+  if (user) {
+    profile = await DriverProfile.create({
+      userId: user._id,
+      weeklySchedule: [],
+      availabilityStatus: "OFFLINE",
+    });
+    return profile;
+  }
+
+  return null;
+}
+
 export class AdminController {
   async getDriverById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -1181,6 +1219,8 @@ export class AdminController {
     }
   }
 
+
+
   async updateDriverSchedule(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = req.params.id as string;
@@ -1195,16 +1235,15 @@ export class AdminController {
         return;
       }
 
-      const profile = await DriverProfile.findOneAndUpdate(
-        { userId: new mongoose.Types.ObjectId(id) },
-        { weeklySchedule },
-        { new: true }
-      );
+      const profile = await resolveDriverProfile(id);
 
       if (!profile) {
         res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
         return;
       }
+
+      profile.weeklySchedule = weeklySchedule;
+      await profile.save();
 
       res.status(200).json({
         success: true,
@@ -1238,7 +1277,7 @@ export class AdminController {
         return;
       }
 
-      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(id) });
+      const profile = await resolveDriverProfile(id);
       if (!profile) {
         res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
         return;
@@ -1279,7 +1318,7 @@ export class AdminController {
         return;
       }
 
-      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(id) }).lean();
+      const profile = await resolveDriverProfile(id);
       if (!profile) {
         res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
         return;
@@ -1304,7 +1343,7 @@ export class AdminController {
 
       const { date, working, startTime, endTime, reason } = req.body;
 
-      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(id) });
+      const profile = await resolveDriverProfile(id);
       if (!profile) {
         res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
         return;
@@ -1344,7 +1383,7 @@ export class AdminController {
         return;
       }
 
-      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(id) });
+      const profile = await resolveDriverProfile(id);
       if (!profile) {
         res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
         return;
@@ -1472,7 +1511,7 @@ export class AdminController {
 
       const { hourlyRate, approvedHours, tripBonusRate, payrollStatus } = req.body;
 
-      const profile = await DriverProfile.findOne({ userId: new mongoose.Types.ObjectId(driverId) });
+      const profile = await resolveDriverProfile(driverId);
       if (!profile) {
         res.status(404).json({ success: false, error: { code: "PROFILE_NOT_FOUND", message: "Driver profile not found" } });
         return;
