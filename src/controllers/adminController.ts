@@ -1041,6 +1041,66 @@ export class AdminController {
         return { title, time, color };
       });
 
+      // 9. Driver Performance by period (real data from MongoDB)
+      const nowTime = new Date();
+      const weekAgo = new Date(nowTime.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const fortnightAgo = new Date(nowTime.getTime() - 14 * 24 * 60 * 60 * 1000);
+      const monthAgo = new Date(nowTime.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const yearAgo = new Date(nowTime.getTime() - 365 * 24 * 60 * 60 * 1000);
+
+      const getDriverPerfForPeriod = async (startDate: Date) => {
+        const agg = await Trip.aggregate([
+          { $match: { status: "COMPLETED", driverId: { $ne: null }, updatedAt: { $gte: startDate } } },
+          { $group: { _id: "$driverId", trips: { $sum: 1 } } },
+          { $sort: { trips: -1 } },
+          { $limit: 5 }
+        ]);
+
+        if (agg.length > 0) {
+          const userIds = agg.map(a => a._id);
+          const users = await User.find({ _id: { $in: userIds } }).select("name").lean();
+          const userMap = new Map(users.map(u => [u._id.toString(), u.name]));
+          return agg.map(a => {
+            const fullName = userMap.get(a._id.toString()) || "Driver";
+            const parts = fullName.split(" ");
+            const shortName = parts.length >= 2 ? `${parts[0]} ${parts[1][0]}.` : fullName;
+            return {
+              name: shortName,
+              trips: a.trips
+            };
+          });
+        }
+
+        const approved = await DriverProfile.find({ approvalStatus: "APPROVED" }).limit(5).lean();
+        const uIds = approved.map(p => p.userId);
+        const uDocs = await User.find({ _id: { $in: uIds } }).select("name").lean();
+        const uMap = new Map(uDocs.map(u => [u._id.toString(), u.name]));
+
+        return approved.map(p => {
+          const fullName = uMap.get(p.userId.toString()) || "Driver";
+          const parts = fullName.split(" ");
+          const shortName = parts.length >= 2 ? `${parts[0]} ${parts[1][0]}.` : fullName;
+          return {
+            name: shortName,
+            trips: p.completedTripsCount || 0
+          };
+        });
+      };
+
+      const [weekPerf, fortnightPerf, monthPerf, yearPerf] = await Promise.all([
+        getDriverPerfForPeriod(weekAgo),
+        getDriverPerfForPeriod(fortnightAgo),
+        getDriverPerfForPeriod(monthAgo),
+        getDriverPerfForPeriod(yearAgo),
+      ]);
+
+      const driverPerformance = {
+        week: weekPerf,
+        fortnight: fortnightPerf,
+        month: monthPerf,
+        year: yearPerf,
+      };
+
       res.status(200).json({
         success: true,
         data: {
@@ -1077,6 +1137,7 @@ export class AdminController {
           revenueOverview,
           topDrivers,
           recentRideRequests,
+          driverPerformance,
         },
       });
 
