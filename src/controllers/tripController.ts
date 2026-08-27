@@ -110,7 +110,7 @@ export class TripController {
         passengerId: req.user.userId,
         pickupLocation: { address: tripData.pickupAddress },
         dropoffLocation: { address: tripData.destinationAddress },
-        fare: tripData.fare || 25.0,
+        fare: tripData.fare,
         status: "REQUESTED",
         scheduledTime,
         startDate: sDate,
