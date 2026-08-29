@@ -26,7 +26,14 @@ app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, curl, postman) or matching frontend origins
-      if (!origin || env.CORS_ORIGIN === "*" || origin.includes("localhost")) {
+      if (
+        !origin ||
+        env.CORS_ORIGIN === "*" ||
+        origin.includes("localhost") ||
+        origin.includes("127.0.0.1") ||
+        origin.includes("184.73.163.84") ||
+        (env.CORS_ORIGIN && origin.includes(env.CORS_ORIGIN))
+      ) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
