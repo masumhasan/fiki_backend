@@ -32,6 +32,7 @@ app.use(
         origin.includes("localhost") ||
         origin.includes("127.0.0.1") ||
         origin.includes("184.73.163.84") ||
+        origin.includes("fikitransit.com") ||
         (env.CORS_ORIGIN && origin.includes(env.CORS_ORIGIN))
       ) {
         callback(null, true);
