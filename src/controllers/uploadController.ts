@@ -4,12 +4,15 @@ import { uploadImageToS3 } from "../services/s3Service.js";
 export class UploadController {
   async uploadImage(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      const category = (req.body.category || req.query.category || "shift-odometers") as string;
+
       // 1. Check if multipart file uploaded via multer
       if (req.file) {
         const url = await uploadImageToS3(
           req.file.buffer,
           req.file.originalname || "photo.jpg",
-          req.file.mimetype || "image/jpeg"
+          req.file.mimetype || "image/jpeg",
+          category
         );
         res.status(200).json({
           success: true,
@@ -23,7 +26,7 @@ export class UploadController {
       if (imageBase64) {
         const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(cleanBase64, "base64");
-        const url = await uploadImageToS3(buffer, fileName, mimeType);
+        const url = await uploadImageToS3(buffer, fileName, mimeType, category);
         res.status(200).json({
           success: true,
           data: { url },
