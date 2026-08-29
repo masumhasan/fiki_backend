@@ -695,7 +695,7 @@ export class DriverController {
         return;
       }
 
-      const { odometer, fuel = "half", condition = "clear", notes = "" } = req.body;
+      const { odometer, fuel = "half", condition = "clear", notes = "", photoUrl = "", startPhotoUrl = "" } = req.body;
       const rawOdometer = String(odometer || "").replace(/[^\d.]/g, "");
       const numOdometer = parseFloat(rawOdometer);
 
@@ -733,6 +733,7 @@ export class DriverController {
         startFuel: fuel,
         startCondition: condition,
         startNotes: notes,
+        startPhotoUrl: photoUrl || startPhotoUrl || "",
         vehicleInfo: profile?.vehicle ? {
           make: profile.vehicle.make,
           model: profile.vehicle.model,
@@ -763,7 +764,7 @@ export class DriverController {
         return;
       }
 
-      const { odometer, fuel = "half", condition = "clear", notes = "" } = req.body;
+      const { odometer, fuel = "half", condition = "clear", notes = "", photoUrl = "", endPhotoUrl = "" } = req.body;
       const rawOdometer = String(odometer || "").replace(/[^\d.]/g, "");
       const numOdometer = parseFloat(rawOdometer);
 
@@ -805,6 +806,7 @@ export class DriverController {
       shift.endFuel = fuel;
       shift.endCondition = condition;
       shift.endNotes = notes;
+      shift.endPhotoUrl = photoUrl || endPhotoUrl || "";
 
       await shift.save();
 

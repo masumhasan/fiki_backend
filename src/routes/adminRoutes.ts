@@ -34,6 +34,9 @@ router.get("/schedule-overview", (req, res, next) => adminController.getSchedule
 router.put("/settings/dispatch-number", (req, res, next) => adminController.updateDispatchNumber(req, res, next));
 
 router.get("/vehicle-reports", (req, res, next) => fleetController.getVehicleReports(req, res, next));
+router.get("/vehicle-reports/:id", (req, res, next) => fleetController.getShiftReportById(req, res, next));
+router.get("/shift-reports", (req, res, next) => fleetController.getShiftReports(req, res, next));
+router.get("/shift-reports/:id", (req, res, next) => fleetController.getShiftReportById(req, res, next));
 router.post("/vehicle-reports", (req, res, next) => fleetController.createVehicleReport(req, res, next));
 router.get("/driver-applications", (req, res, next) => fleetController.getDriverApplications(req, res, next));
 router.get("/driver-applications/:id", (req, res, next) => fleetController.getDriverApplicationById(req, res, next));

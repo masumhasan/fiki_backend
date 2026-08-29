@@ -11,6 +11,7 @@ import healthRoutes from "./routes/healthRoutes.js";
 import landingRoutes from "./routes/landingRoutes.js";
 import tripRoutes from "./routes/tripRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
+import uploadRoutes from "./routes/uploadRoutes.js";
 
 const app: Express = express();
 
@@ -36,8 +37,8 @@ app.use(
 );
 
 // Body Parser
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ limit: "20mb", extended: true }));
 
 // Health Check Routes
 app.use("/", healthRoutes);
@@ -49,6 +50,7 @@ app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/trips", tripRoutes);
 app.use("/api/v1/landing", landingRoutes);
 app.use("/api/v1/settings", settingsRoutes);
+app.use("/api/v1/upload", uploadRoutes);
 
 // 404 Handler for unmatched routes
 app.use((req, res) => {

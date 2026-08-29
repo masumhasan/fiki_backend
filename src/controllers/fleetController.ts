@@ -6,6 +6,7 @@ import { DriverApplication } from "../models/DriverApplication.js";
 import { User } from "../models/User.js";
 import { DriverProfile } from "../models/DriverProfile.js";
 import { Vehicle } from "../models/Vehicle.js";
+import { DriverShift } from "../models/DriverShift.js";
 
 const vehicleReportSchema = z.object({
   vehicleId: z.string().min(1, "Vehicle ID is required"),
@@ -20,25 +21,62 @@ const vehicleReportSchema = z.object({
 });
 
 export class FleetController {
-  async getVehicleReports(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async getShiftReports(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      let reports = await VehicleReport.find().sort({ createdAt: -1 });
+      const shifts = await DriverShift.find()
+        .populate("driverId", "name email phone")
+        .sort({ startedAt: -1, createdAt: -1 })
+        .lean();
 
-      // Seed initial sample report if empty
-      if (reports.length === 0) {
-        const seeded = await VehicleReport.create({
-          vehicleId: "V-101",
-          make: "Toyota",
-          vehicleModel: "Sienna 2023",
-          licensePlate: "MIA-4821",
-          inspectionStatus: "PASS",
-          fuelLevelPercentage: 78,
-          wheelchairLiftOperational: true,
-          notes: "Regular 30-day inspection completed.",
-          inspectorName: "Admin Inspector",
-        });
-        reports = [seeded];
-      }
+      const driverUserIds = shifts.map((s: any) => s.driverId?._id || s.driverId).filter(Boolean);
+      const profiles = await DriverProfile.find({ userId: { $in: driverUserIds } }).lean();
+      const profileMap = new Map();
+      profiles.forEach((p: any) => profileMap.set(p.userId.toString(), p));
+
+      const reports = shifts.map((s: any) => {
+        const driverUser = s.driverId;
+        const driverIdStr = driverUser?._id?.toString() || s.driverId?.toString();
+        const profile = profileMap.get(driverIdStr);
+
+        const driverName = driverUser?.name || "Driver";
+        const vehicleName = [s.vehicleInfo?.make || profile?.vehicle?.make || "Toyota", s.vehicleInfo?.model || profile?.vehicle?.model || "Sienna"].filter(Boolean).join(" ");
+        const vehicleNumber = s.vehicleInfo?.licensePlate || profile?.vehicle?.licensePlate || "FKT-1234";
+
+        const startDateObj = new Date(s.startedAt);
+        const dateStr = startDateObj.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+        const startTimeStr = startDateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const endTimeStr = s.endedAt ? new Date(s.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+        const shiftTimeText = s.status === "COMPLETED" ? `${startTimeStr} – ${endTimeStr}` : `Started at ${startTimeStr}`;
+
+        return {
+          id: s._id.toString(),
+          shiftId: `VR-S-${s._id.toString().substring(s._id.toString().length - 4).toUpperCase()}`,
+          driverName,
+          driverEmail: driverUser?.email || "—",
+          driverPhone: driverUser?.phone || "—",
+          driverCode: profile?.licenseNumber ? `D-${profile.licenseNumber.substring(0, 4)}` : `D-${s._id.toString().substring(0, 4).toUpperCase()}`,
+          vehicleName,
+          vehicleNumber,
+          shiftTimeText,
+          shiftDateText: dateStr,
+          status: s.status === "COMPLETED" ? "Completed" : "In progress",
+          startingOdometer: s.startingOdometer,
+          endingOdometer: s.endingOdometer || null,
+          estimatedMiles: s.estimatedMiles || (s.endingOdometer ? s.endingOdometer - s.startingOdometer : 0),
+          startFuel: s.startFuel || "half",
+          endFuel: s.endFuel || "half",
+          startCondition: s.startCondition || "clear",
+          endCondition: s.endCondition || "clear",
+          startNotes: s.startNotes || "",
+          endNotes: s.endNotes || "",
+          startPhotoUrl: s.startPhotoUrl || "",
+          endPhotoUrl: s.endPhotoUrl || "",
+          totalHoursText: s.totalHoursText || (s.endedAt ? `${Math.round((new Date(s.endedAt).getTime() - startDateObj.getTime()) / 3600000)}h` : "In progress"),
+          startedAt: s.startedAt,
+          endedAt: s.endedAt,
+        };
+      });
 
       res.status(200).json({
         success: true,
@@ -47,6 +85,84 @@ export class FleetController {
     } catch (error) {
       next(error);
     }
+  }
+
+  async getShiftReportById(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const rawId = req.params.id;
+      const id = Array.isArray(rawId) ? rawId[0] : rawId;
+
+      let shift: any = null;
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        shift = await DriverShift.findById(id).populate("driverId", "name email phone").lean();
+      }
+      if (!shift) {
+        const allShifts = await DriverShift.find().populate("driverId", "name email phone").sort({ startedAt: -1 }).lean();
+        shift = allShifts.find((s: any) => s._id.toString().endsWith(id.replace("VR-S-", "").toLowerCase()) || s._id.toString() === id);
+      }
+
+      if (!shift) {
+        res.status(404).json({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Shift report not found" },
+        });
+        return;
+      }
+
+      const driverUser = shift.driverId;
+      const driverIdStr = driverUser?._id?.toString() || shift.driverId?.toString();
+      const profile = await DriverProfile.findOne({ userId: driverIdStr }).lean();
+
+      const driverName = driverUser?.name || "Driver";
+      const vehicleName = [shift.vehicleInfo?.make || profile?.vehicle?.make || "Toyota", shift.vehicleInfo?.model || profile?.vehicle?.model || "Sienna"].filter(Boolean).join(" ");
+      const vehicleNumber = shift.vehicleInfo?.licensePlate || profile?.vehicle?.licensePlate || "FKT-1234";
+
+      const startDateObj = new Date(shift.startedAt);
+      const dateStr = startDateObj.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+
+      const startTimeStr = startDateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const endTimeStr = shift.endedAt ? new Date(shift.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+      const shiftTimeText = shift.status === "COMPLETED" ? `${startTimeStr} – ${endTimeStr}` : `Started at ${startTimeStr}`;
+
+      res.status(200).json({
+        success: true,
+        data: {
+          id: shift._id.toString(),
+          shiftId: `VR-S-${shift._id.toString().substring(shift._id.toString().length - 4).toUpperCase()}`,
+          driverName,
+          driverEmail: driverUser?.email || "—",
+          driverPhone: driverUser?.phone || "—",
+          driverCode: profile?.licenseNumber ? `D-${profile.licenseNumber.substring(0, 4)}` : `D-${shift._id.toString().substring(0, 4).toUpperCase()}`,
+          vehicleName,
+          vehicleNumber,
+          shiftTimeText,
+          startTimeStr,
+          endTimeStr,
+          shiftDateText: dateStr,
+          status: shift.status === "COMPLETED" ? "Completed" : "In progress",
+          startingOdometer: shift.startingOdometer,
+          endingOdometer: shift.endingOdometer || null,
+          estimatedMiles: shift.estimatedMiles || (shift.endingOdometer ? shift.endingOdometer - shift.startingOdometer : 0),
+          startFuel: shift.startFuel || "half",
+          endFuel: shift.endFuel || "half",
+          startCondition: shift.startCondition || "clear",
+          endCondition: shift.endCondition || "clear",
+          startNotes: shift.startNotes || "",
+          endNotes: shift.endNotes || "",
+          startPhotoUrl: shift.startPhotoUrl || "",
+          endPhotoUrl: shift.endPhotoUrl || "",
+          totalHoursText: shift.totalHoursText || (shift.endedAt ? `${Math.round((new Date(shift.endedAt).getTime() - startDateObj.getTime()) / 3600000)}h` : "In progress"),
+          startedAt: shift.startedAt,
+          endedAt: shift.endedAt,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getVehicleReports(req: Request, res: Response, next: NextFunction): Promise<void> {
+    return this.getShiftReports(req, res, next);
   }
 
   async createVehicleReport(req: Request, res: Response, next: NextFunction): Promise<void> {
