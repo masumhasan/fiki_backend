@@ -68,6 +68,7 @@ async function seed() {
         await DriverProfile.create({
           userId: user._id,
           licenseNumber: "DL-987654321",
+          licenseExpirationDate: "2028-08-24",
           vehicle: account.vehicle,
           approvalStatus: "APPROVED",
           availabilityStatus: "OFFLINE",

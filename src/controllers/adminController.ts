@@ -107,7 +107,29 @@ async function resolveDriverProfile(id: string) {
     $or: [{ _id: objId }, { userId: objId }],
   });
 
-  if (profile) return profile;
+  if (profile) {
+    if (!profile.licenseNumber || !profile.licenseExpirationDate) {
+      const user = await User.findById(profile.userId);
+      if (user && user.email) {
+        const app = await mongoose.model("DriverApplication").findOne({ email: user.email.toLowerCase() });
+        if (app) {
+          let modified = false;
+          if (!profile.licenseNumber && app.licenseNumber) {
+            profile.licenseNumber = app.licenseNumber;
+            modified = true;
+          }
+          if (!profile.licenseExpirationDate && app.licenseExpirationDate) {
+            profile.licenseExpirationDate = app.licenseExpirationDate;
+            modified = true;
+          }
+          if (modified) {
+            await profile.save();
+          }
+        }
+      }
+    }
+    return profile;
+  }
 
   // 2. Check DriverApplication by _id
   const app = await mongoose.model("DriverApplication").findById(objId).catch(() => null);
@@ -125,10 +147,22 @@ async function resolveDriverProfile(id: string) {
   // 3. Check User by _id with role DRIVER and auto-create DriverProfile if missing
   const user = await User.findById(objId);
   if (user) {
+    let licenseNumber = "";
+    let licenseExpirationDate = "";
+    if (user.email) {
+      const app = await mongoose.model("DriverApplication").findOne({ email: user.email.toLowerCase() });
+      if (app) {
+        licenseNumber = app.licenseNumber || "";
+        licenseExpirationDate = app.licenseExpirationDate || "";
+      }
+    }
+
     profile = await DriverProfile.create({
       userId: user._id,
       weeklySchedule: [],
       availabilityStatus: "OFFLINE",
+      licenseNumber,
+      licenseExpirationDate,
     });
     return profile;
   }
