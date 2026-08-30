@@ -11,6 +11,7 @@ router.use(authenticate, authorize("ADMIN"));
 
 router.get("/drivers", (req, res, next) => adminController.getDrivers(req, res, next));
 router.get("/drivers/:id", (req, res, next) => adminController.getDriverById(req, res, next));
+router.put("/drivers/:id", (req, res, next) => adminController.updateDriverProfile(req, res, next));
 router.patch("/drivers/:id/status", (req, res, next) => adminController.updateDriverStatus(req, res, next));
 router.put("/drivers/:id/schedule", (req, res, next) => adminController.updateDriverSchedule(req, res, next));
 router.post("/drivers/:id/one-time-change", (req, res, next) => adminController.addOneTimeChange(req, res, next));

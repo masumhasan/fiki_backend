@@ -350,9 +350,13 @@ export class FleetController {
         profile = new DriverProfile({
           userId: driverUser._id,
           licenseNumber: app.licenseNumber,
+          licenseExpirationDate: app.licenseExpirationDate,
           approvalStatus: "APPROVED",
           availabilityStatus: "ONLINE",
         });
+      } else {
+        if (!profile.licenseNumber) profile.licenseNumber = app.licenseNumber;
+        if (!profile.licenseExpirationDate) profile.licenseExpirationDate = app.licenseExpirationDate;
       }
 
       if (selectedVehicle) {

@@ -174,6 +174,7 @@ export class AdminController {
           profile: profile
             ? {
                 licenseNumber: profile.licenseNumber || null,
+                licenseExpirationDate: profile.licenseExpirationDate || null,
                 vehicle: profile.vehicle || null,
                 approvalStatus: profile.approvalStatus,
                 availabilityStatus: profile.availabilityStatus,
@@ -252,6 +253,8 @@ export class AdminController {
                 approvalStatus: p.approvalStatus,
                 availabilityStatus: p.availabilityStatus,
                 vehicle: p.vehicle,
+                licenseNumber: p.licenseNumber || null,
+                licenseExpirationDate: p.licenseExpirationDate || null,
                 completedTripsCount: p.completedTripsCount,
                 weeklySchedule: p.weeklySchedule || null,
                 oneTimeChanges: p.oneTimeChanges || [],
@@ -1211,6 +1214,62 @@ export class AdminController {
       res.status(200).json({
         success: true,
         message: "Driver deleted successfully",
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+  async updateDriverProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid driver ID format" } });
+        return;
+      }
+
+      const { name, phone, email, licenseNumber, licenseExpirationDate } = req.body;
+
+      const driverUser = await User.findOne({ _id: id, role: "DRIVER" });
+      if (!driverUser) {
+        res.status(404).json({ success: false, error: { code: "DRIVER_NOT_FOUND", message: "Driver not found" } });
+        return;
+      }
+
+      // Update User fields
+      if (name !== undefined) driverUser.name = name;
+      if (phone !== undefined) driverUser.phone = phone;
+      if (email !== undefined) driverUser.email = email.toLowerCase();
+      await driverUser.save();
+
+      // Update or create DriverProfile
+      let profile = await DriverProfile.findOne({ userId: id });
+      if (!profile) {
+        profile = new DriverProfile({
+          userId: id,
+          approvalStatus: "APPROVED",
+          availabilityStatus: "ONLINE",
+        });
+      }
+
+      if (licenseNumber !== undefined) profile.licenseNumber = licenseNumber;
+      if (licenseExpirationDate !== undefined) profile.licenseExpirationDate = licenseExpirationDate;
+      await profile.save();
+
+      res.status(200).json({
+        success: true,
+        message: "Driver profile updated successfully",
+        data: {
+          id: driverUser._id.toString(),
+          name: driverUser.name,
+          phone: driverUser.phone,
+          email: driverUser.email,
+          profile: {
+            licenseNumber: profile.licenseNumber,
+            licenseExpirationDate: profile.licenseExpirationDate,
+            approvalStatus: profile.approvalStatus,
+            availabilityStatus: profile.availabilityStatus,
+          }
+        }
       });
     } catch (error) {
       next(error);

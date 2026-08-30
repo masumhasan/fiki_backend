@@ -21,6 +21,7 @@ export interface IOneTimeChange {
 export interface IDriverProfile extends Document {
   userId: mongoose.Types.ObjectId;
   licenseNumber?: string;
+  licenseExpirationDate?: string;
   vehicle?: {
     make?: string;
     model?: string;
@@ -77,6 +78,7 @@ const driverProfileSchema = new Schema<IDriverProfile>(
       index: true,
     },
     licenseNumber: { type: String, trim: true },
+    licenseExpirationDate: { type: String, trim: true },
     vehicle: {
       make: { type: String, trim: true },
       model: { type: String, trim: true },
