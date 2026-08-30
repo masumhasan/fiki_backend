@@ -63,6 +63,7 @@ export interface IDriverApplication extends Document {
   dateOfBirth?: string;
   signature?: string;
   bidForm?: string;
+  authorizeBackgroundCheck?: boolean;
 
   createdAt: Date;
   updatedAt: Date;
@@ -137,6 +138,7 @@ const driverApplicationSchema = new Schema<IDriverApplication>(
     dateOfBirth: { type: String },
     signature: { type: String },
     bidForm: { type: String },
+    authorizeBackgroundCheck: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
