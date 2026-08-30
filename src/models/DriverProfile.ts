@@ -35,7 +35,6 @@ export interface IDriverProfile extends Document {
     coordinates: [number, number]; // [longitude, latitude]
     updatedAt: Date;
   };
-  rating?: number;
   completedTripsCount: number;
   hourlyRate: number;
   approvedHours: number;
@@ -124,7 +123,6 @@ const driverProfileSchema = new Schema<IDriverProfile>(
       },
       updatedAt: { type: Date },
     },
-    rating: { type: Number, default: 5.0 },
     completedTripsCount: { type: Number, default: 0 },
     hourlyRate: { type: Number, default: 14.0 },
     approvedHours: { type: Number, default: 80.0 },

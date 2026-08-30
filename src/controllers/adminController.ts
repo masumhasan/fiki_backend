@@ -177,7 +177,6 @@ export class AdminController {
                 vehicle: profile.vehicle || null,
                 approvalStatus: profile.approvalStatus,
                 availabilityStatus: profile.availabilityStatus,
-                rating: profile.rating ?? null,
                 completedTripsCount: profile.completedTripsCount,
                 weeklySchedule: profile.weeklySchedule || null,
                 oneTimeChanges: profile.oneTimeChanges || [],
@@ -253,7 +252,6 @@ export class AdminController {
                 approvalStatus: p.approvalStatus,
                 availabilityStatus: p.availabilityStatus,
                 vehicle: p.vehicle,
-                rating: p.rating,
                 completedTripsCount: p.completedTripsCount,
                 weeklySchedule: p.weeklySchedule || null,
                 oneTimeChanges: p.oneTimeChanges || [],
@@ -523,7 +521,7 @@ export class AdminController {
       if (trip.driverId) {
         const driverObjId = (trip.driverId as any)._id || trip.driverId;
         driverProfile = await DriverProfile.findOne({ userId: driverObjId })
-          .select("vehicle rating availabilityStatus")
+          .select("vehicle availabilityStatus")
           .lean();
       }
 
@@ -912,7 +910,7 @@ export class AdminController {
       // 4. Top Drivers
       const topDriverUserIds = topDriversAgg.map((d: any) => d._id);
       const driverUsers = await User.find({ _id: { $in: topDriverUserIds } }).select("name").lean();
-      const driverProfiles = await DriverProfile.find({ userId: { $in: topDriverUserIds } }).select("userId rating availabilityStatus completedTripsCount").lean();
+      const driverProfiles = await DriverProfile.find({ userId: { $in: topDriverUserIds } }).select("userId availabilityStatus completedTripsCount").lean();
       
       const userMap = new Map(driverUsers.map((u: any) => [u._id.toString(), u]));
       const profileMap = new Map(driverProfiles.map((p: any) => [p.userId.toString(), p]));
@@ -933,7 +931,7 @@ export class AdminController {
           initials,
           name,
           trips: item.tripsCount,
-          rating: (p?.rating || 4.8).toFixed(1),
+          rating: "5.0",
           revenue: `$${item.revenueSum.toLocaleString()}`,
           revenueVal: item.revenueSum,
           status: statusStr,
@@ -962,7 +960,7 @@ export class AdminController {
             initials,
             name,
             trips: p.completedTripsCount || 0,
-            rating: (p.rating || 4.8).toFixed(1),
+            rating: "5.0",
             revenue: "$0",
             revenueVal: 0,
             status: statusStr,

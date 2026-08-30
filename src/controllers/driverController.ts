@@ -59,7 +59,6 @@ export class DriverController {
                 approvalStatus: profile.approvalStatus,
                 availabilityStatus: profile.availabilityStatus,
                 currentLocation: profile.currentLocation,
-                rating: profile.rating,
                 completedTripsCount: profile.completedTripsCount,
               }
             : null,
@@ -344,7 +343,7 @@ export class DriverController {
       }
 
       const profile = await DriverProfile.findOne({ userId: req.user.userId })
-        .select("vehicle rating availabilityStatus")
+        .select("vehicle availabilityStatus")
         .lean();
 
       res.status(200).json({
