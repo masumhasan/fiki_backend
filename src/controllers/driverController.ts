@@ -243,6 +243,53 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
   };
 }
 
+export function countTodayTripsForDriver(trips: any[], now: Date = new Date()): number {
+  const weekDaysFull = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const weekDaysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const todayFull = weekDaysFull[now.getDay()].toLowerCase();
+  const todayShort = weekDaysShort[now.getDay()].toLowerCase();
+
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+
+  let count = 0;
+
+  trips.forEach((t: any) => {
+    if (["CANCELLED", "QUOTE_DENIED"].includes(t.status)) return;
+
+    const isRecurring = t.schedule === "recurring" || t.tripType === "recurring" || (Array.isArray(t.recurringDays) && t.recurringDays.length > 0);
+    if (isRecurring && Array.isArray(t.recurringDays) && t.recurringDays.length > 0) {
+      const matchesDay = t.recurringDays.some((day: string) => {
+        const d = String(day).trim().toLowerCase();
+        return d === todayFull || d === todayShort || todayFull.startsWith(d);
+      });
+      if (!matchesDay) return;
+    }
+
+    const outboundDate = (t.startDate || t.pickupDate || "").toString().trim().substring(0, 10);
+    const returnDate = (t.endDate || t.returnDate || t.startDate || t.pickupDate || "").toString().trim().substring(0, 10);
+    const createdDate = t.createdAt ? new Date(t.createdAt).toISOString().split("T")[0] : "";
+
+    const isRoundTrip = t.tripType === "round-trip" || t.tripType === "round_trip" || t.isRoundTrip === true;
+
+    const outboundMatches = outboundDate === todayStr || (!outboundDate && createdDate === todayStr) || isRecurring;
+    if (outboundMatches) {
+      count++;
+    }
+
+    if (isRoundTrip && (t.returnPickupTime || t.returnPickupAddress)) {
+      const returnMatches = returnDate === todayStr || (!returnDate && createdDate === todayStr) || isRecurring;
+      if (returnMatches) {
+        count++;
+      }
+    }
+  });
+
+  return count;
+}
+
 export class DriverController {
   async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -462,10 +509,14 @@ export class DriverController {
 
       const total = await Trip.countDocuments(filter);
 
+      const allDriverTrips = await Trip.find({ driverId: req.user.userId }).lean();
+      const todayTripsCount = countTodayTripsForDriver(allDriverTrips);
+
       res.status(200).json({
         success: true,
         data: {
           trips,
+          todayTripsCount,
           pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
         },
       });
