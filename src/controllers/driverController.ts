@@ -25,6 +25,60 @@ const locationSchema = z.object({
     .max(180, "Longitude must be <= 180"),
 });
 
+interface FortnightPeriod {
+  id: string;
+  startDate: string;
+  endDate: string;
+  label: string;
+  isCurrent: boolean;
+  expectedPayDate: string;
+  payrollStatus: "Approved" | "Paid" | "Entered into Payroll" | "Waiting Deposit";
+}
+
+function getFortnightlyPeriods(count = 10): FortnightPeriod[] {
+  const anchorCurrentStart = new Date("2026-08-17T00:00:00.000Z");
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const periods: FortnightPeriod[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const pStart = new Date(anchorCurrentStart.getTime() - i * 14 * 24 * 60 * 60 * 1000);
+    const pEnd = new Date(pStart.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+    const startY = pStart.getUTCFullYear();
+    const startM = String(pStart.getUTCMonth() + 1).padStart(2, "0");
+    const startD = String(pStart.getUTCDate()).padStart(2, "0");
+    const startDateStr = `${startY}-${startM}-${startD}`;
+
+    const endY = pEnd.getUTCFullYear();
+    const endM = String(pEnd.getUTCMonth() + 1).padStart(2, "0");
+    const endD = String(pEnd.getUTCDate()).padStart(2, "0");
+    const endDateStr = `${endY}-${endM}-${endD}`;
+
+    const labelStart = `${monthNames[pStart.getUTCMonth()]} ${pStart.getUTCDate()}`;
+    const labelEnd = `${monthNames[pEnd.getUTCMonth()]} ${pEnd.getUTCDate()}, ${endY}`;
+    const label = `${labelStart} – ${labelEnd}`;
+
+    const payDateObj = new Date(pEnd.getTime() + 4 * 24 * 60 * 60 * 1000);
+    const expectedPayDate = `${monthNames[payDateObj.getUTCMonth()]} ${payDateObj.getUTCDate()}, ${payDateObj.getUTCFullYear()}`;
+
+    const isCurrent = i === 0;
+    const payrollStatus: "Approved" | "Paid" = isCurrent ? "Approved" : "Paid";
+
+    periods.push({
+      id: `${startDateStr}_${endDateStr}`,
+      startDate: startDateStr,
+      endDate: endDateStr,
+      label,
+      isCurrent,
+      expectedPayDate,
+      payrollStatus,
+    });
+  }
+
+  return periods;
+}
+
 export class DriverController {
   async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -459,43 +513,75 @@ export class DriverController {
       const profile = await DriverProfile.findOne({ userId: driverId }).lean();
       
       const hourlyRate = profile?.hourlyRate ?? 14.0;
-      const approvedHours = profile?.approvedHours ?? 80.0;
+      const defaultApprovedHours = profile?.approvedHours ?? 80.0;
       const tripBonusPerRide = profile?.tripBonusRate ?? 3.0;
-      const payrollStatus = profile?.payrollStatus || "Approved";
 
-      // 14-day current pay period calculation window
-      const now = new Date();
-      const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      const availablePeriods = getFortnightlyPeriods(12);
 
-      // Fetch completed trips in current pay period
+      const qStart = req.query.startDate as string;
+      const qEnd = req.query.endDate as string;
+
+      let activePeriod = availablePeriods[0];
+      if (qStart && qEnd) {
+        const found = availablePeriods.find((p) => p.startDate === qStart && p.endDate === qEnd);
+        if (found) {
+          activePeriod = found;
+        } else {
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const dS = new Date(qStart);
+          const dE = new Date(qEnd);
+          const labelStart = `${monthNames[dS.getUTCMonth()]} ${dS.getUTCDate()}`;
+          const labelEnd = `${monthNames[dE.getUTCMonth()]} ${dE.getUTCDate()}, ${dE.getUTCFullYear()}`;
+          const payDateObj = new Date(dE.getTime() + 4 * 24 * 60 * 60 * 1000);
+          const expectedPayDate = `${monthNames[payDateObj.getUTCMonth()]} ${payDateObj.getUTCDate()}, ${payDateObj.getUTCFullYear()}`;
+
+          activePeriod = {
+            id: `${qStart}_${qEnd}`,
+            startDate: qStart,
+            endDate: qEnd,
+            label: `${labelStart} – ${labelEnd}`,
+            isCurrent: false,
+            expectedPayDate,
+            payrollStatus: "Paid",
+          };
+        }
+      }
+
+      const filterStart = new Date(`${activePeriod.startDate}T00:00:00.000Z`);
+      const filterEnd = new Date(`${activePeriod.endDate}T23:59:59.999Z`);
+
+      // Fetch completed trips in selected pay period
       const completedTrips = await Trip.find({
         driverId,
         status: "COMPLETED",
-        createdAt: { $gte: fourteenDaysAgo }
+        createdAt: { $gte: filterStart, $lte: filterEnd },
       }).sort({ createdAt: -1 }).lean();
 
       const completedTripsCount = completedTrips.length;
       const tripBonus = completedTripsCount * tripBonusPerRide;
+
+      const approvedHours = activePeriod.isCurrent
+        ? defaultApprovedHours
+        : completedTripsCount > 0
+        ? defaultApprovedHours
+        : 0;
+
       const regularWages = hourlyRate * approvedHours;
       const grossEarnings = regularWages + tripBonus;
 
-      // Date range formatting
-      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      const payPeriodStartStr = `${monthNames[fourteenDaysAgo.getMonth()]} ${fourteenDaysAgo.getDate()}`;
-      const payPeriodEndStr = `${monthNames[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
-      const payPeriodRange = `${payPeriodStartStr} – ${payPeriodEndStr}`;
-
-      const expectedPayDateObj = new Date(now.getTime() + 4 * 24 * 60 * 60 * 1000);
-      const expectedPayDate = `${monthNames[expectedPayDateObj.getMonth()]} ${expectedPayDateObj.getDate()}, ${expectedPayDateObj.getFullYear()}`;
+      const payrollStatus = activePeriod.payrollStatus || profile?.payrollStatus || "Approved";
+      const payPeriodRange = activePeriod.label;
+      const expectedPayDate = activePeriod.expectedPayDate;
 
       // Map rides for ride history
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       const rideHistory = completedTrips.map((t: any) => {
         const tripId = `TRP-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
         const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
         const pickup = t.pickupLocation?.address || "Pickup";
         const dropoff = t.dropoffLocation?.address || t.returnDestinationAddress || "Destination";
         const d = new Date(t.createdAt);
-        const dateStr = `${monthNames[d.getMonth()]} ${d.getDate()}`;
+        const dateStr = `${monthNames[d.getUTCMonth()]} ${d.getUTCDate()}`;
         return {
           date: dateStr,
           tripId,
@@ -524,6 +610,9 @@ export class DriverController {
           payrollStatus,
           payPeriodRange,
           expectedPayDate,
+          isCurrentPeriod: activePeriod.isCurrent,
+          selectedPeriod: activePeriod,
+          availablePeriods,
           rideHistory,
         },
       });
