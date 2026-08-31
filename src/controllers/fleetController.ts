@@ -24,7 +24,7 @@ export class FleetController {
   async getShiftReports(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const shifts = await DriverShift.find()
-        .populate("driverId", "name email phone")
+        .populate("driverId", "name email phone avatarUrl")
         .sort({ startedAt: -1, createdAt: -1 })
         .lean();
 
@@ -55,6 +55,7 @@ export class FleetController {
           driverName,
           driverEmail: driverUser?.email || "—",
           driverPhone: driverUser?.phone || "—",
+          driverAvatarUrl: driverUser?.avatarUrl || profile?.avatarUrl || "",
           driverCode: profile?.licenseNumber ? `D-${profile.licenseNumber.substring(0, 4)}` : `D-${s._id.toString().substring(0, 4).toUpperCase()}`,
           vehicleName,
           vehicleNumber,
@@ -94,10 +95,10 @@ export class FleetController {
 
       let shift: any = null;
       if (mongoose.Types.ObjectId.isValid(id)) {
-        shift = await DriverShift.findById(id).populate("driverId", "name email phone").lean();
+        shift = await DriverShift.findById(id).populate("driverId", "name email phone avatarUrl").lean();
       }
       if (!shift) {
-        const allShifts = await DriverShift.find().populate("driverId", "name email phone").sort({ startedAt: -1 }).lean();
+        const allShifts = await DriverShift.find().populate("driverId", "name email phone avatarUrl").sort({ startedAt: -1 }).lean();
         shift = allShifts.find((s: any) => s._id.toString().endsWith(id.replace("VR-S-", "").toLowerCase()) || s._id.toString() === id);
       }
 
@@ -132,6 +133,7 @@ export class FleetController {
           driverName,
           driverEmail: driverUser?.email || "—",
           driverPhone: driverUser?.phone || "—",
+          driverAvatarUrl: driverUser?.avatarUrl || profile?.avatarUrl || "",
           driverCode: profile?.licenseNumber ? `D-${profile.licenseNumber.substring(0, 4)}` : `D-${shift._id.toString().substring(0, 4).toUpperCase()}`,
           vehicleName,
           vehicleNumber,

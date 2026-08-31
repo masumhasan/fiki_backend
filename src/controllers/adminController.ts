@@ -1596,7 +1596,7 @@ export class AdminController {
       // Fetch all driver profiles
       const profiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).lean();
       const userIds = profiles.map((p: any) => p.userId);
-      const users = await User.find({ _id: { $in: userIds } }).select("name email phone").lean();
+      const users = await User.find({ _id: { $in: userIds } }).select("name email phone avatarUrl").lean();
       const userMap = new Map(users.map((u: any) => [u._id.toString(), u]));
 
       // Fetch completed trip counts in past 14 days per driver
@@ -1643,6 +1643,7 @@ export class AdminController {
           name,
           email,
           phone,
+          avatarUrl: u?.avatarUrl || p.avatarUrl || "",
           vehicle: p.vehicle ? `${p.vehicle.make || ""} ${p.vehicle.model || ""}`.trim() || "Unassigned" : "Unassigned",
           licensePlate: p.vehicle?.licensePlate || "N/A",
           hourlyRate,
@@ -1807,7 +1808,7 @@ export class AdminController {
       // Query approved drivers and all shifts in current week
       const profiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).lean();
       const userIds = profiles.map((p: any) => p.userId);
-      const users = await User.find({ _id: { $in: userIds } }).select("name email phone").lean();
+      const users = await User.find({ _id: { $in: userIds } }).select("name email phone avatarUrl").lean();
       const userMap = new Map(users.map((u: any) => [u._id.toString(), u]));
 
       const weekShifts = await DriverShift.find({
@@ -1842,6 +1843,7 @@ export class AdminController {
         const initials = name.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase();
         const tone = avatarTones[pIdx % avatarTones.length];
 
+        const avatarUrl = u?.avatarUrl || p.avatarUrl || "";
         const weeklyScheduleConfig = p.weeklySchedule || [];
         const configMap = new Map(weeklyScheduleConfig.map((s: any) => [s.day, s]));
 
@@ -1942,8 +1944,8 @@ export class AdminController {
           initials,
           tone,
           total: `${totalHours}h 00m`,
-          shifts,
-          weeklySchedule: p.weeklySchedule,
+          avatarUrl,
+          weeklySchedule: weeklyScheduleConfig,
         };
       });
 
