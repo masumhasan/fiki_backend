@@ -75,12 +75,18 @@ const createTripSchema = z.object({
   consentEsignature: z.boolean(),
   consentHipaa: z.boolean(),
 
-  // Signature
-  signature: z.string().min(1, "Signature is required"),
+  // Signature (optional for manual requests)
+  signature: z.string().optional().or(z.literal("")).or(z.null()),
   signatureDate: z.string().optional().or(z.literal("")).or(z.null()),
-  printedName: z.string().min(2, "Printed name is required"),
+  printedName: z.string().optional().or(z.literal("")).or(z.null()),
   relationshipToPassenger: z.string().optional().or(z.null()),
   fare: z.number().positive("Fare is required and must be positive"),
+
+  // Metadata & Case Manager Info
+  requestSource: z.string().optional(),
+  caseManagerName: z.string().optional().or(z.literal("")).or(z.null()),
+  caseManagerPhone: z.string().optional().or(z.literal("")).or(z.null()),
+  caseManagerEmail: z.string().email().optional().or(z.literal("")).or(z.null()),
 });
 
 const assignDriverSchema = z.object({
@@ -437,6 +443,7 @@ export class AdminController {
         returnDate: eDate || tripData.returnDate,
         recurringStartDate: sDate || tripData.recurringStartDate,
         recurringEndDate: eDate || tripData.recurringEndDate,
+        requestSource: "ADMIN",
         ...restOfTripData,
       });
 

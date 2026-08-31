@@ -69,8 +69,9 @@ const createRideSchema = z.object({
   signature: z.string().min(1, "Signature is required"),
   signatureDate: z.string().optional().or(z.literal("")).or(z.null()),
   printedName: z.string().min(2, "Printed name is required"),
-  relationshipToPassenger: z.string().optional().or(z.null()),
+  relationshipToPassenger: z.string().optional(),
   fare: z.number().positive().optional(),
+  requestSource: z.string().optional(),
 });
 
 const respondToQuoteSchema = z.object({
@@ -119,6 +120,7 @@ export class TripController {
         returnDate: eDate || tripData.returnDate,
         recurringStartDate: sDate || tripData.recurringStartDate,
         recurringEndDate: eDate || tripData.recurringEndDate,
+        requestSource: tripData.requestSource || "LANDING",
         ...tripData,
       });
 

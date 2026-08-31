@@ -114,6 +114,12 @@ export interface ITrip extends Document {
   receiverName?: string;
   receiverRelationship?: string;
   receiverSignedAt?: Date;
+
+  // Metadata / Source & Case Manager Info
+  requestSource?: string;
+  caseManagerName?: string;
+  caseManagerPhone?: string;
+  caseManagerEmail?: string;
 }
 
 const tripSchema = new Schema<ITrip>(
@@ -240,6 +246,12 @@ const tripSchema = new Schema<ITrip>(
     receiverName: { type: String },
     receiverRelationship: { type: String },
     receiverSignedAt: { type: Date },
+
+    // Metadata / Source & Case Manager Info
+    requestSource: { type: String },
+    caseManagerName: { type: String },
+    caseManagerPhone: { type: String },
+    caseManagerEmail: { type: String },
   },
   {
     timestamps: true,
