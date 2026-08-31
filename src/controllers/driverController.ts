@@ -5,6 +5,14 @@ import { DriverAvailabilityStatus, DriverProfile } from "../models/DriverProfile
 import { DriverShift } from "../models/DriverShift.js";
 import { Trip, TripStatus } from "../models/Trip.js";
 import { User } from "../models/User.js";
+import {
+  CENTRAL_TZ,
+  getCentralDayAbbr,
+  getCentralDayBounds,
+  getCentralDayFull,
+  getCentralTodayStr,
+  parseCentralDateTime,
+} from "../utils/dateUtils.js";
 
 
 
@@ -150,19 +158,18 @@ export interface ScheduleCheckResult {
  * Late cutoff: 60 min after scheduled end.
  */
 export function resolveScheduleForToday(profile: any, now: Date = new Date()): ScheduleCheckResult {
-  const DAY_ABBRS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const GRACE_BEFORE_MS = 15 * 60 * 1000;   // 15 min early
   const LATE_CUTOFF_MS  = 60 * 60 * 1000;   // 60 min after end
 
-  const todayStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
-  const todayAbbr = DAY_ABBRS[now.getDay()];
+  const todayStr = getCentralTodayStr(now);
+  const todayAbbr = getCentralDayAbbr(now);
 
   // --- 1. Check one-time overrides first ---
   let override: any = null;
   const oneTimeChanges: any[] = profile?.oneTimeChanges || [];
   for (const ch of oneTimeChanges) {
     if (!ch?.date) continue;
-    const chDate = new Date(ch.date).toISOString().split("T")[0];
+    const chDate = getCentralTodayStr(new Date(ch.date));
     if (chDate === todayStr) {
       override = ch;
       break;
@@ -201,20 +208,10 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
     };
   }
 
-  // --- 3. Parse times ---
-  const startParsed = parseTimeStr(startTime);
-  const endParsed   = parseTimeStr(endTime);
-
-  // Build ms timestamps for today
-  const startMs = startParsed
-    ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), startParsed.hours, startParsed.minutes, 0, 0).getTime()
-    : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 0, 0, 0).getTime();
-
-  const endMs = endParsed
-    ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), endParsed.hours, endParsed.minutes, 0, 0).getTime()
-    : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 16, 0, 0, 0).getTime();
-
-  const nowMs = now.getTime();
+  // --- 3. Parse Central timestamps ---
+  const startMs = parseCentralDateTime(startTime, todayStr, now).getTime();
+  const endMs   = parseCentralDateTime(endTime, todayStr, now).getTime();
+  const nowMs   = now.getTime();
 
   // --- 4. Time-window check ---
   const tooEarly = nowMs < startMs - GRACE_BEFORE_MS;
@@ -225,10 +222,10 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
 
   if (tooEarly) {
     allowStart = false;
-    reason = `Your shift starts at ${startTime}. You can clock in up to 15 minutes before your scheduled start time.`;
+    reason = `Your shift starts at ${startTime} Central Time. You can clock in up to 15 minutes before your scheduled start time.`;
   } else if (tooLate) {
     allowStart = false;
-    reason = `Your scheduled shift ended at ${endTime}. The clock-in window has closed. Contact admin if you need a schedule change.`;
+    reason = `Your scheduled shift ended at ${endTime} Central Time. The clock-in window has closed. Contact admin if you need a schedule change.`;
   }
 
   return {
@@ -244,15 +241,9 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
 }
 
 export function countTodayTripsForDriver(trips: any[], now: Date = new Date()): number {
-  const weekDaysFull = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const weekDaysShort = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const todayFull = weekDaysFull[now.getDay()].toLowerCase();
-  const todayShort = weekDaysShort[now.getDay()].toLowerCase();
-
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  const todayStr = `${yyyy}-${mm}-${dd}`;
+  const todayFull = getCentralDayFull(now).toLowerCase();
+  const todayShort = getCentralDayAbbr(now).toLowerCase();
+  const todayStr = getCentralTodayStr(now);
 
   let count = 0;
 
@@ -268,19 +259,21 @@ export function countTodayTripsForDriver(trips: any[], now: Date = new Date()): 
       if (!matchesDay) return;
     }
 
-    const outboundDate = (t.startDate || t.pickupDate || "").toString().trim().substring(0, 10);
-    const returnDate = (t.endDate || t.returnDate || t.startDate || t.pickupDate || "").toString().trim().substring(0, 10);
-    const createdDate = t.createdAt ? new Date(t.createdAt).toISOString().split("T")[0] : "";
+    const rawOutbound = t.startDate || t.pickupDate || t.createdAt;
+    const outboundDate = rawOutbound ? getCentralTodayStr(new Date(rawOutbound)) : "";
+
+    const rawReturn = t.endDate || t.returnDate || t.startDate || t.pickupDate || t.createdAt;
+    const returnDate = rawReturn ? getCentralTodayStr(new Date(rawReturn)) : "";
 
     const isRoundTrip = t.tripType === "round-trip" || t.tripType === "round_trip" || t.isRoundTrip === true;
 
-    const outboundMatches = outboundDate === todayStr || (!outboundDate && createdDate === todayStr) || isRecurring;
+    const outboundMatches = outboundDate === todayStr || isRecurring;
     if (outboundMatches) {
       count++;
     }
 
     if (isRoundTrip && (t.returnPickupTime || t.returnPickupAddress)) {
-      const returnMatches = returnDate === todayStr || (!returnDate && createdDate === todayStr) || isRecurring;
+      const returnMatches = returnDate === todayStr || isRecurring;
       if (returnMatches) {
         count++;
       }
@@ -911,11 +904,8 @@ export class DriverController {
 
       const driverId = req.user.userId;
       const now = new Date();
-      const todayStr = now.toISOString().split("T")[0];
-
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const todayEnd = new Date(todayStart);
-      todayEnd.setDate(todayEnd.getDate() + 1);
+      const todayStr = getCentralTodayStr(now);
+      const { start: todayStart, end: todayEnd } = getCentralDayBounds(todayStr, now);
 
       // Start of current week (Monday)
       const currentDayOfWeek = now.getDay();
@@ -1125,7 +1115,7 @@ export class DriverController {
       }
 
       const profile = await DriverProfile.findOne({ userId: req.user.userId }).lean();
-      const todayStr = new Date().toISOString().split("T")[0];
+      const todayStr = getCentralTodayStr();
 
       // ── Schedule Enforcement ──────────────────────────────────────────────
       // Check if driver is allowed to start a shift right now.
