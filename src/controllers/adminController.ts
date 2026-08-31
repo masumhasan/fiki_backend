@@ -1945,6 +1945,7 @@ export class AdminController {
           tone,
           total: `${totalHours}h 00m`,
           avatarUrl,
+          shifts,
           weeklySchedule: weeklyScheduleConfig,
         };
       });
