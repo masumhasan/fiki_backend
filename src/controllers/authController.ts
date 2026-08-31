@@ -106,6 +106,84 @@ export class AuthController {
       data: { message: "Successfully logged out" },
     });
   }
+
+  async forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const parsed = forgotPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: { code: "VALIDATION_FAILED", message: "Invalid email address", details: parsed.error.flatten().fieldErrors },
+        });
+        return;
+      }
+
+      const result = await authService.forgotPassword(parsed.data.email);
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async verifyOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const parsed = verifyOtpSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: { code: "VALIDATION_FAILED", message: "Invalid email or OTP format", details: parsed.error.flatten().fieldErrors },
+        });
+        return;
+      }
+
+      const result = await authService.verifyOtp(parsed.data.email, parsed.data.otp);
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const parsed = resetPasswordSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: { code: "VALIDATION_FAILED", message: "Invalid reset password payload", details: parsed.error.flatten().fieldErrors },
+        });
+        return;
+      }
+
+      const result = await authService.resetPassword(parsed.data.email, parsed.data.otp, parsed.data.newPassword);
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email("Invalid email address format"),
+});
+
+const verifyOtpSchema = z.object({
+  email: z.string().email("Invalid email address format"),
+  otp: z.string().min(6, "OTP must be 6 digits").max(6, "OTP must be 6 digits"),
+});
+
+const resetPasswordSchema = z.object({
+  email: z.string().email("Invalid email address format"),
+  otp: z.string().min(6, "OTP must be 6 digits").max(6, "OTP must be 6 digits"),
+  newPassword: z.string().min(6, "New password must be at least 6 characters"),
+});
 
 export const authController = new AuthController();
