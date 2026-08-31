@@ -21,6 +21,7 @@ export interface AuthResult {
     role: UserRole;
     phone?: string;
     accountStatus: string;
+    avatarUrl?: string;
   };
   token: string;
 }
@@ -52,6 +53,8 @@ export class AuthService {
       expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
     });
 
+    const profile = await DriverProfile.findOne({ userId: user._id }).lean();
+
     return {
       user: {
         id: user._id.toString(),
@@ -60,6 +63,7 @@ export class AuthService {
         role: user.role,
         phone: user.phone,
         accountStatus: user.accountStatus,
+        avatarUrl: user.avatarUrl || profile?.avatarUrl || "",
       },
       token,
     };
