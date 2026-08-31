@@ -25,7 +25,7 @@ const locationSchema = z.object({
     .max(180, "Longitude must be <= 180"),
 });
 
-interface FortnightPeriod {
+export interface FortnightPeriod {
   id: string;
   startDate: string;
   endDate: string;
@@ -35,15 +35,21 @@ interface FortnightPeriod {
   payrollStatus: "Approved" | "Paid" | "Entered into Payroll" | "Waiting Deposit";
 }
 
-function getFortnightlyPeriods(count = 10): FortnightPeriod[] {
+export function getFortnightlyPeriods(joinDate?: Date, count = 20): FortnightPeriod[] {
   const anchorCurrentStart = new Date("2026-08-17T00:00:00.000Z");
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const minJoinTime = joinDate ? new Date(joinDate).getTime() : 0;
 
   const periods: FortnightPeriod[] = [];
 
   for (let i = 0; i < count; i++) {
     const pStart = new Date(anchorCurrentStart.getTime() - i * 14 * 24 * 60 * 60 * 1000);
     const pEnd = new Date(pStart.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+    // Stop generating past periods if the period end is before driver join date
+    if (minJoinTime > 0 && pEnd.getTime() < minJoinTime && i > 0) {
+      break;
+    }
 
     const startY = pStart.getUTCFullYear();
     const startM = String(pStart.getUTCMonth() + 1).padStart(2, "0");
@@ -73,6 +79,30 @@ function getFortnightlyPeriods(count = 10): FortnightPeriod[] {
       isCurrent,
       expectedPayDate,
       payrollStatus,
+    });
+  }
+
+  if (periods.length === 0) {
+    const pStart = anchorCurrentStart;
+    const pEnd = new Date(pStart.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const startY = pStart.getUTCFullYear();
+    const startM = String(pStart.getUTCMonth() + 1).padStart(2, "0");
+    const startD = String(pStart.getUTCDate()).padStart(2, "0");
+    const endY = pEnd.getUTCFullYear();
+    const endM = String(pEnd.getUTCMonth() + 1).padStart(2, "0");
+    const endD = String(pEnd.getUTCDate()).padStart(2, "0");
+    const labelStart = `${monthNames[pStart.getUTCMonth()]} ${pStart.getUTCDate()}`;
+    const labelEnd = `${monthNames[pEnd.getUTCMonth()]} ${pEnd.getUTCDate()}, ${endY}`;
+    const payDateObj = new Date(pEnd.getTime() + 4 * 24 * 60 * 60 * 1000);
+
+    periods.push({
+      id: `${startY}-${startM}-${startD}_${endY}-${endM}-${endD}`,
+      startDate: `${startY}-${startM}-${startD}`,
+      endDate: `${endY}-${endM}-${endD}`,
+      label: `${labelStart} – ${labelEnd}`,
+      isCurrent: true,
+      expectedPayDate: `${monthNames[payDateObj.getUTCMonth()]} ${payDateObj.getUTCDate()}, ${payDateObj.getUTCFullYear()}`,
+      payrollStatus: "Approved",
     });
   }
 
@@ -510,13 +540,15 @@ export class DriverController {
       }
 
       const driverId = req.user.userId;
+      const user = await User.findById(driverId).lean();
       const profile = await DriverProfile.findOne({ userId: driverId }).lean();
       
       const hourlyRate = profile?.hourlyRate ?? 14.0;
       const defaultApprovedHours = profile?.approvedHours ?? 80.0;
       const tripBonusPerRide = profile?.tripBonusRate ?? 3.0;
 
-      const availablePeriods = getFortnightlyPeriods(12);
+      const joinDate = user?.createdAt ? new Date(user.createdAt) : undefined;
+      const availablePeriods = getFortnightlyPeriods(joinDate, 20);
 
       const qStart = req.query.startDate as string;
       const qEnd = req.query.endDate as string;
@@ -569,7 +601,23 @@ export class DriverController {
       const regularWages = hourlyRate * approvedHours;
       const grossEarnings = regularWages + tripBonus;
 
-      const payrollStatus = activePeriod.payrollStatus || profile?.payrollStatus || "Approved";
+      let customPeriodStatus = activePeriod.payrollStatus;
+      if (profile?.periodPayrollStatuses) {
+        const pMap = profile.periodPayrollStatuses as any;
+        const getStatus = (id: string) => (typeof pMap.get === "function" ? pMap.get(id) : pMap[id]);
+
+        availablePeriods.forEach((p) => {
+          const st = getStatus(p.id);
+          if (st) p.payrollStatus = st as any;
+        });
+
+        const currentActiveSt = getStatus(activePeriod.id);
+        if (currentActiveSt) {
+          customPeriodStatus = currentActiveSt;
+        }
+      }
+
+      const payrollStatus = customPeriodStatus || profile?.payrollStatus || "Approved";
       const payPeriodRange = activePeriod.label;
       const expectedPayDate = activePeriod.expectedPayDate;
 

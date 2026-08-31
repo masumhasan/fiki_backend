@@ -8,6 +8,7 @@ import { Trip } from "../models/Trip.js";
 import { User } from "../models/User.js";
 import { Setting } from "../models/Setting.js";
 import bcrypt from "bcryptjs";
+import { getFortnightlyPeriods } from "./driverController.js";
 
 const updateDriverStatusSchema = z.object({
   approvalStatus: z.enum(["APPROVED", "REJECTED"]).optional(),
@@ -199,14 +200,77 @@ export class AdminController {
 
       const profile = await syncDriverProfileWithApplication(user);
 
-      const trips = await Trip.find({ driverId: user._id })
+      const qStart = req.query.startDate as string;
+      const qEnd = req.query.endDate as string;
+
+      const joinDate = user.createdAt ? new Date(user.createdAt) : undefined;
+      const availablePeriods = getFortnightlyPeriods(joinDate, 20);
+
+      let activePeriod = availablePeriods[0];
+      if (qStart && qEnd) {
+        const found = availablePeriods.find((p: any) => p.startDate === qStart && p.endDate === qEnd);
+        if (found) {
+          activePeriod = found;
+        } else {
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const dS = new Date(qStart);
+          const dE = new Date(qEnd);
+          const labelStart = `${monthNames[dS.getUTCMonth()]} ${dS.getUTCDate()}`;
+          const labelEnd = `${monthNames[dE.getUTCMonth()]} ${dE.getUTCDate()}, ${dE.getUTCFullYear()}`;
+          const payDateObj = new Date(dE.getTime() + 4 * 24 * 60 * 60 * 1000);
+          activePeriod = {
+            id: `${qStart}_${qEnd}`,
+            startDate: qStart,
+            endDate: qEnd,
+            label: `${labelStart} – ${labelEnd}`,
+            isCurrent: false,
+            expectedPayDate: `${monthNames[payDateObj.getUTCMonth()]} ${payDateObj.getUTCDate()}, ${payDateObj.getUTCFullYear()}`,
+            payrollStatus: "Paid",
+          };
+        }
+      }
+
+      let customPeriodStatus = activePeriod.payrollStatus;
+      if (profile?.periodPayrollStatuses) {
+        const pMap = profile.periodPayrollStatuses as any;
+        const getStatus = (pId: string) => (typeof pMap.get === "function" ? pMap.get(pId) : pMap[pId]);
+        availablePeriods.forEach((p: any) => {
+          const st = getStatus(p.id);
+          if (st) p.payrollStatus = st as any;
+        });
+        const currentActiveSt = getStatus(activePeriod.id);
+        if (currentActiveSt) {
+          customPeriodStatus = currentActiveSt as any;
+        }
+      }
+
+      const filterStart = new Date(`${activePeriod.startDate}T00:00:00.000Z`);
+      const filterEnd = new Date(`${activePeriod.endDate}T23:59:59.999Z`);
+
+      const trips = await Trip.find({
+        driverId: user._id,
+        createdAt: { $gte: filterStart, $lte: filterEnd },
+      })
         .populate("passengerId", "name")
         .sort({ createdAt: -1 })
-        .limit(20)
         .lean();
 
       const completedTrips = trips.filter((t) => t.status === "COMPLETED");
       const totalFare = completedTrips.reduce((sum, t) => sum + (t.fare || 0), 0);
+
+      const hourlyRate = profile?.hourlyRate ?? 14.0;
+      const defaultApprovedHours = profile?.approvedHours ?? 80.0;
+      const tripBonusRate = profile?.tripBonusRate ?? 3.0;
+
+      const approvedHours = activePeriod.isCurrent
+        ? defaultApprovedHours
+        : completedTrips.length > 0
+        ? defaultApprovedHours
+        : 0;
+
+      const tripBonus = completedTrips.length * tripBonusRate;
+      const regularWages = hourlyRate * approvedHours;
+      const grossEarnings = regularWages + tripBonus;
 
       res.status(200).json({
         success: true,
@@ -218,6 +282,18 @@ export class AdminController {
           avatarUrl: user.avatarUrl || profile?.avatarUrl || "",
           accountStatus: user.accountStatus,
           createdAt: user.createdAt,
+          selectedPeriod: activePeriod,
+          availablePeriods,
+          payrollStatus: customPeriodStatus || profile?.payrollStatus || "Approved",
+          earnings: {
+            hourlyRate,
+            approvedHours,
+            tripBonusRate,
+            completedTripsCount: completedTrips.length,
+            tripBonus,
+            regularWages,
+            grossEarnings,
+          },
           profile: profile
             ? {
                 licenseNumber: profile.licenseNumber || null,
@@ -1611,7 +1687,7 @@ export class AdminController {
         return;
       }
 
-      const { hourlyRate, approvedHours, tripBonusRate, payrollStatus } = req.body;
+      const { hourlyRate, approvedHours, tripBonusRate, payrollStatus, periodId } = req.body;
 
       const profile = await resolveDriverProfile(driverId);
       if (!profile) {
@@ -1630,6 +1706,13 @@ export class AdminController {
       }
       if (payrollStatus && typeof payrollStatus === "string") {
         profile.payrollStatus = payrollStatus;
+        if (periodId && typeof periodId === "string") {
+          if (!profile.periodPayrollStatuses) {
+            profile.periodPayrollStatuses = new Map();
+          }
+          profile.periodPayrollStatuses.set(periodId, payrollStatus);
+          profile.markModified("periodPayrollStatuses");
+        }
       }
 
       await profile.save();
@@ -1642,6 +1725,7 @@ export class AdminController {
           approvedHours: profile.approvedHours,
           tripBonusRate: profile.tripBonusRate,
           payrollStatus: profile.payrollStatus,
+          periodId: periodId || null,
         },
       });
     } catch (error) {
