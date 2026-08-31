@@ -11,7 +11,8 @@ export type TripStatus =
   | "DRIVER_ARRIVED"
   | "IN_PROGRESS"
   | "COMPLETED"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "MISSED";
 
 export type QuoteResponseAction = "ACCEPT" | "DENY" | "COUNTER";
 
@@ -157,6 +158,7 @@ const tripSchema = new Schema<ITrip>(
         "IN_PROGRESS",
         "COMPLETED",
         "CANCELLED",
+        "MISSED",
       ],
       default: "REQUESTED",
       required: true,

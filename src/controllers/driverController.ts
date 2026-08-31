@@ -601,6 +601,7 @@ export class DriverController {
         IN_PROGRESS: ["COMPLETED", "CANCELLED"],
         COMPLETED: [],
         CANCELLED: [],
+        MISSED: [],
       };
 
       const allowed = ALLOWED_TRANSITIONS[trip.status] || [];
