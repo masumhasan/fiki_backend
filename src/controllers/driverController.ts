@@ -51,10 +51,13 @@ export class DriverController {
             phone: user.phone,
             role: user.role,
             accountStatus: user.accountStatus,
+            avatarUrl: user.avatarUrl || profile?.avatarUrl || "",
           },
           profile: profile
             ? {
                 licenseNumber: profile.licenseNumber,
+                licenseExpirationDate: profile.licenseExpirationDate,
+                avatarUrl: profile.avatarUrl || user.avatarUrl || "",
                 vehicle: profile.vehicle,
                 approvalStatus: profile.approvalStatus,
                 availabilityStatus: profile.availabilityStatus,
@@ -62,6 +65,68 @@ export class DriverController {
                 completedTripsCount: profile.completedTripsCount,
               }
             : null,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const { name, phone, licenseNumber, licenseExpirationDate, avatarUrl } = req.body;
+
+      // Update User document
+      const userUpdate: Record<string, any> = {};
+      if (name !== undefined) userUpdate.name = name;
+      if (phone !== undefined) userUpdate.phone = phone;
+      if (avatarUrl !== undefined) userUpdate.avatarUrl = avatarUrl;
+
+      const user = await User.findByIdAndUpdate(req.user.userId, userUpdate, { new: true }).lean();
+      if (!user) {
+        res.status(404).json({ success: false, error: { code: "USER_NOT_FOUND", message: "Driver account not found" } });
+        return;
+      }
+
+      // Update DriverProfile document
+      const profileUpdate: Record<string, any> = {};
+      if (licenseNumber !== undefined) profileUpdate.licenseNumber = licenseNumber;
+      if (licenseExpirationDate !== undefined) profileUpdate.licenseExpirationDate = licenseExpirationDate;
+      if (avatarUrl !== undefined) profileUpdate.avatarUrl = avatarUrl;
+
+      const profile = await DriverProfile.findOneAndUpdate(
+        { userId: req.user.userId },
+        profileUpdate,
+        { new: true, upsert: true }
+      ).lean();
+
+      res.status(200).json({
+        success: true,
+        data: {
+          user: {
+            id: user._id.toString(),
+            email: user.email,
+            name: user.name,
+            phone: user.phone,
+            role: user.role,
+            accountStatus: user.accountStatus,
+            avatarUrl: user.avatarUrl || profile?.avatarUrl || "",
+          },
+          profile: {
+            licenseNumber: profile.licenseNumber,
+            licenseExpirationDate: profile.licenseExpirationDate,
+            avatarUrl: profile.avatarUrl || user.avatarUrl || "",
+            vehicle: profile.vehicle,
+            approvalStatus: profile.approvalStatus,
+            availabilityStatus: profile.availabilityStatus,
+            currentLocation: profile.currentLocation,
+            completedTripsCount: profile.completedTripsCount,
+          },
         },
       });
     } catch (error) {

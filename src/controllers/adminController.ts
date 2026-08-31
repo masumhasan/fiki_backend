@@ -209,6 +209,7 @@ export class AdminController {
           name: user.name,
           email: user.email,
           phone: user.phone || null,
+          avatarUrl: user.avatarUrl || profile?.avatarUrl || "",
           accountStatus: user.accountStatus,
           createdAt: user.createdAt,
           profile: profile
@@ -286,6 +287,7 @@ export class AdminController {
           email: u.email,
           name: u.name,
           phone: u.phone,
+          avatarUrl: u.avatarUrl || p?.avatarUrl || "",
           accountStatus: u.accountStatus,
           createdAt: u.createdAt,
           profile: p

@@ -8,6 +8,8 @@ const router = Router();
 router.use(authenticate, authorize("DRIVER"));
 
 router.get("/me/profile", (req, res, next) => driverController.getProfile(req, res, next));
+router.patch("/me/profile", (req, res, next) => driverController.updateProfile(req, res, next));
+router.put("/me/profile", (req, res, next) => driverController.updateProfile(req, res, next));
 router.patch("/me/availability", (req, res, next) => driverController.updateAvailability(req, res, next));
 router.post("/me/location", (req, res, next) => driverController.updateLocation(req, res, next));
 
