@@ -109,6 +109,140 @@ export function getFortnightlyPeriods(joinDate?: Date, count = 20): FortnightPer
   return periods;
 }
 
+/** Parse time string like "08:00 AM" or "16:00" into { hours, minutes } */
+function parseTimeStr(timeStr: string): { hours: number; minutes: number } | null {
+  if (!timeStr) return null;
+  const trimmed = timeStr.trim();
+  // Support "HH:MM AM/PM" format
+  const ampm = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(trimmed);
+  if (ampm) {
+    let h = parseInt(ampm[1], 10);
+    const m = parseInt(ampm[2], 10);
+    const period = ampm[3].toUpperCase();
+    if (period === "PM" && h < 12) h += 12;
+    if (period === "AM" && h === 12) h = 0;
+    return { hours: h, minutes: m };
+  }
+  // Support "HH:MM" 24h format
+  const h24 = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (h24) {
+    return { hours: parseInt(h24[1], 10), minutes: parseInt(h24[2], 10) };
+  }
+  return null;
+}
+
+export interface ScheduleCheckResult {
+  isWorkingDay: boolean;
+  startTime: string;
+  endTime: string;
+  scheduledStartMs: number;
+  scheduledEndMs: number;
+  allowStart: boolean;
+  reason: string;
+  isOneTimeOverride: boolean;
+}
+
+/**
+ * Resolve today's schedule for a driver profile.
+ * Checks one-time changes first (emergency overrides), then weekly schedule.
+ * Returns whether the driver is allowed to start a shift right now.
+ * Grace window: 15 min before scheduled start.
+ * Late cutoff: 60 min after scheduled end.
+ */
+export function resolveScheduleForToday(profile: any, now: Date = new Date()): ScheduleCheckResult {
+  const DAY_ABBRS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const GRACE_BEFORE_MS = 15 * 60 * 1000;   // 15 min early
+  const LATE_CUTOFF_MS  = 60 * 60 * 1000;   // 60 min after end
+
+  const todayStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+  const todayAbbr = DAY_ABBRS[now.getDay()];
+
+  // --- 1. Check one-time overrides first ---
+  let override: any = null;
+  const oneTimeChanges: any[] = profile?.oneTimeChanges || [];
+  for (const ch of oneTimeChanges) {
+    if (!ch?.date) continue;
+    const chDate = new Date(ch.date).toISOString().split("T")[0];
+    if (chDate === todayStr) {
+      override = ch;
+      break;
+    }
+  }
+
+  // --- 2. Resolve effective schedule ---
+  let isWorkingDay: boolean;
+  let startTime: string;
+  let endTime: string;
+  let isOneTimeOverride = false;
+
+  if (override !== null) {
+    isOneTimeOverride = true;
+    isWorkingDay = override.working === true;
+    startTime = override.startTime || "08:00 AM";
+    endTime   = override.endTime   || "04:00 PM";
+  } else {
+    const weeklySchedule: any[] = profile?.weeklySchedule || [];
+    const dayEntry = weeklySchedule.find((d: any) => d.day === todayAbbr);
+    isWorkingDay = dayEntry ? dayEntry.working !== false : false;
+    startTime = dayEntry?.startTime || "08:00 AM";
+    endTime   = dayEntry?.endTime   || "04:00 PM";
+  }
+
+  if (!isWorkingDay) {
+    return {
+      isWorkingDay: false,
+      startTime,
+      endTime,
+      scheduledStartMs: 0,
+      scheduledEndMs: 0,
+      allowStart: false,
+      reason: "Today is your scheduled day off. Contact admin if you need to work today.",
+      isOneTimeOverride,
+    };
+  }
+
+  // --- 3. Parse times ---
+  const startParsed = parseTimeStr(startTime);
+  const endParsed   = parseTimeStr(endTime);
+
+  // Build ms timestamps for today
+  const startMs = startParsed
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), startParsed.hours, startParsed.minutes, 0, 0).getTime()
+    : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 0, 0, 0).getTime();
+
+  const endMs = endParsed
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), endParsed.hours, endParsed.minutes, 0, 0).getTime()
+    : new Date(now.getFullYear(), now.getMonth(), now.getDate(), 16, 0, 0, 0).getTime();
+
+  const nowMs = now.getTime();
+
+  // --- 4. Time-window check ---
+  const tooEarly = nowMs < startMs - GRACE_BEFORE_MS;
+  const tooLate  = nowMs > endMs + LATE_CUTOFF_MS;
+
+  let allowStart = true;
+  let reason = "";
+
+  if (tooEarly) {
+    allowStart = false;
+    reason = `Your shift starts at ${startTime}. You can clock in up to 15 minutes before your scheduled start time.`;
+  } else if (tooLate) {
+    allowStart = false;
+    reason = `Your scheduled shift ended at ${endTime}. The clock-in window has closed. Contact admin if you need a schedule change.`;
+  }
+
+  return {
+    isWorkingDay,
+    startTime,
+    endTime,
+    scheduledStartMs: startMs,
+    scheduledEndMs: endMs,
+    allowStart,
+    reason,
+    isOneTimeOverride,
+  };
+}
+
 export class DriverController {
   async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -582,21 +716,35 @@ export class DriverController {
       const filterStart = new Date(`${activePeriod.startDate}T00:00:00.000Z`);
       const filterEnd = new Date(`${activePeriod.endDate}T23:59:59.999Z`);
 
-      // Fetch completed trips in selected pay period
-      const completedTrips = await Trip.find({
-        driverId,
-        status: "COMPLETED",
-        createdAt: { $gte: filterStart, $lte: filterEnd },
-      }).sort({ createdAt: -1 }).lean();
+      // Fetch completed trips and completed shifts in selected pay period in parallel
+      const [completedTrips, completedShifts] = await Promise.all([
+        Trip.find({
+          driverId,
+          status: "COMPLETED",
+          createdAt: { $gte: filterStart, $lte: filterEnd },
+        }).sort({ createdAt: -1 }).lean(),
+        DriverShift.find({
+          driverId,
+          status: "COMPLETED",
+          startedAt: { $gte: filterStart, $lte: filterEnd },
+        }).lean(),
+      ]);
 
       const completedTripsCount = completedTrips.length;
       const tripBonus = completedTripsCount * tripBonusPerRide;
 
-      const approvedHours = activePeriod.isCurrent
-        ? defaultApprovedHours
-        : completedTripsCount > 0
-        ? defaultApprovedHours
-        : 0;
+      // Calculate actual worked hours from completed shift records
+      const totalWorkedMinutes = completedShifts.reduce((sum: number, s: any) => {
+        return sum + (s.totalMinutes || 0);
+      }, 0);
+      const totalWorkedHours = parseFloat((totalWorkedMinutes / 60).toFixed(2));
+
+      // For current period with no shifts yet, fall back to approvedHours for estimation
+      const approvedHours = totalWorkedHours > 0
+        ? totalWorkedHours
+        : activePeriod.isCurrent
+          ? defaultApprovedHours
+          : 0;
 
       const regularWages = hourlyRate * approvedHours;
       const grossEarnings = regularWages + tripBonus;
@@ -647,6 +795,7 @@ export class DriverController {
         data: {
           hourlyRate,
           approvedHours,
+          totalWorkedHours,
           completedTripsCount,
           tripBonusPerRide,
           tripBonusRate: tripBonusPerRide,
@@ -879,6 +1028,7 @@ export class DriverController {
         data: {
           todayShift: todayShift || null,
           todaySchedule,
+          todayScheduleCheck: resolveScheduleForToday(driverProfile),
           tripSummary,
           upcomingSchedule,
           weeklySchedule,
@@ -924,6 +1074,27 @@ export class DriverController {
 
       const profile = await DriverProfile.findOne({ userId: req.user.userId }).lean();
       const todayStr = new Date().toISOString().split("T")[0];
+
+      // ── Schedule Enforcement ──────────────────────────────────────────────
+      // Check if driver is allowed to start a shift right now.
+      // Existing in-progress shifts are never blocked (driver can always end).
+      const scheduleCheck = resolveScheduleForToday(profile);
+      if (!scheduleCheck.allowStart) {
+        res.status(403).json({
+          success: false,
+          error: {
+            code: "SCHEDULE_NOT_ALLOWED",
+            message: scheduleCheck.reason,
+            schedule: {
+              isWorkingDay: scheduleCheck.isWorkingDay,
+              startTime: scheduleCheck.startTime,
+              endTime: scheduleCheck.endTime,
+              isOneTimeOverride: scheduleCheck.isOneTimeOverride,
+            },
+          },
+        });
+        return;
+      }
 
       const shift = await DriverShift.create({
         driverId: req.user.userId,
