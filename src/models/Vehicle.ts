@@ -8,6 +8,7 @@ export interface IVehicle extends Document {
   fleetId: string;
   status: "Active" | "Inactive" | "Maintenance";
   assignedDriverId?: Schema.Types.ObjectId;
+  plateExpirationDate?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,6 +26,7 @@ const vehicleSchema = new Schema<IVehicle>(
       default: "Active",
     },
     assignedDriverId: { type: Schema.Types.ObjectId, ref: "Driver" },
+    plateExpirationDate: { type: String },
   },
   { timestamps: true }
 );
