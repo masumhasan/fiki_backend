@@ -899,7 +899,7 @@ export class AdminController {
         return;
       }
 
-      const allowedStatuses: string[] = ["REQUESTED", "QUOTE_COUNTERED"];
+      const allowedStatuses: string[] = ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT", "ACCEPTED"];
       if (!allowedStatuses.includes(trip.status)) {
         res.status(409).json({
           success: false,
@@ -912,8 +912,22 @@ export class AdminController {
       trip.quotedFare = parsed.data.quotedFare;
       trip.quotedAt = new Date();
       trip.quoteNote = parsed.data.quoteNote;
-      trip.status = "QUOTE_SENT";
+      if (trip.status === "REQUESTED" || trip.status === "QUOTE_COUNTERED") {
+        trip.status = "QUOTE_SENT";
+      }
       await trip.save();
+
+      // Sync quotedFare and quoteNote to child legs if this is a master request
+      if (!trip.parentRequestId) {
+        await Trip.updateMany(
+          { parentRequestId: trip._id },
+          {
+            quotedFare: trip.quotedFare,
+            quoteNote: trip.quoteNote,
+            ...(trip.status === "QUOTE_SENT" ? { status: "QUOTE_SENT" } : {}),
+          }
+        );
+      }
 
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
