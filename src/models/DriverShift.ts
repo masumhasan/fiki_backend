@@ -21,6 +21,8 @@ export interface IDriverShift extends Document {
   endNotes?: string;
   startPhotoUrl?: string;
   endPhotoUrl?: string;
+  startPhotoUrls?: string[];
+  endPhotoUrls?: string[];
   vehicleInfo?: {
     make?: string;
     model?: string;
@@ -106,6 +108,14 @@ const driverShiftSchema = new Schema<IDriverShift>(
     },
     endPhotoUrl: {
       type: String,
+    },
+    startPhotoUrls: {
+      type: [String],
+      default: [],
+    },
+    endPhotoUrls: {
+      type: [String],
+      default: [],
     },
     vehicleInfo: {
       make: String,

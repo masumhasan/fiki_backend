@@ -33,6 +33,39 @@ const locationSchema = z.object({
     .max(180, "Longitude must be <= 180"),
 });
 
+function extractPhotoUrls(...sources: any[]): string[] {
+  const result: string[] = [];
+  for (const src of sources) {
+    if (!src) continue;
+    if (Array.isArray(src)) {
+      src.forEach((item) => {
+        if (typeof item === "string" && item.trim() && !result.includes(item.trim())) {
+          result.push(item.trim());
+        }
+      });
+    } else if (typeof src === "string" && src.trim()) {
+      const val = src.trim();
+      if (val.startsWith("[") && val.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(val);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((item) => {
+              if (typeof item === "string" && item.trim() && !result.includes(item.trim())) {
+                result.push(item.trim());
+              }
+            });
+            continue;
+          }
+        } catch {}
+      }
+      if (!result.includes(val)) {
+        result.push(val);
+      }
+    }
+  }
+  return result;
+}
+
 export interface FortnightPeriod {
   id: string;
   startDate: string;
@@ -1148,9 +1181,22 @@ export class DriverController {
         return;
       }
 
-      const { odometer, fuel = "half", condition = "clear", notes = "", photoUrl = "", startPhotoUrl = "" } = req.body;
+      const {
+        odometer,
+        fuel = "half",
+        condition = "clear",
+        notes = "",
+        photoUrl = "",
+        startPhotoUrl = "",
+        photos,
+        startPhotos,
+        photoUrls,
+        startPhotoUrls,
+      } = req.body;
       const rawOdometer = String(odometer || "").replace(/[^\d.]/g, "");
       const numOdometer = parseFloat(rawOdometer);
+
+      const collectedStartPhotos = extractPhotoUrls(photos, startPhotos, photoUrls, startPhotoUrls, photoUrl, startPhotoUrl);
 
       if (isNaN(numOdometer) || numOdometer <= 0) {
         res.status(400).json({
@@ -1207,7 +1253,8 @@ export class DriverController {
         startFuel: fuel,
         startCondition: condition,
         startNotes: notes,
-        startPhotoUrl: photoUrl || startPhotoUrl || "",
+        startPhotoUrl: collectedStartPhotos[0] || photoUrl || startPhotoUrl || "",
+        startPhotoUrls: collectedStartPhotos,
         vehicleInfo: profile?.vehicle ? {
           make: profile.vehicle.make,
           model: profile.vehicle.model,
@@ -1238,9 +1285,22 @@ export class DriverController {
         return;
       }
 
-      const { odometer, fuel = "half", condition = "clear", notes = "", photoUrl = "", endPhotoUrl = "" } = req.body;
+      const {
+        odometer,
+        fuel = "half",
+        condition = "clear",
+        notes = "",
+        photoUrl = "",
+        endPhotoUrl = "",
+        photos,
+        endPhotos,
+        photoUrls,
+        endPhotoUrls,
+      } = req.body;
       const rawOdometer = String(odometer || "").replace(/[^\d.]/g, "");
       const numOdometer = parseFloat(rawOdometer);
+
+      const collectedEndPhotos = extractPhotoUrls(photos, endPhotos, photoUrls, endPhotoUrls, photoUrl, endPhotoUrl);
 
       if (isNaN(numOdometer) || numOdometer <= 0) {
         res.status(400).json({
@@ -1280,7 +1340,8 @@ export class DriverController {
       shift.endFuel = fuel;
       shift.endCondition = condition;
       shift.endNotes = notes;
-      shift.endPhotoUrl = photoUrl || endPhotoUrl || "";
+      shift.endPhotoUrl = collectedEndPhotos[0] || photoUrl || endPhotoUrl || "";
+      shift.endPhotoUrls = collectedEndPhotos;
 
       await shift.save();
 
