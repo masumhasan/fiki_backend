@@ -259,6 +259,31 @@ export class TripController {
 
       await trip.save();
 
+      // Sync status and fare across master request and all child legs
+      const masterIdObj = trip.parentRequestId || trip._id;
+      const updatePayload: any = {
+        status: trip.status,
+      };
+
+      if (action === "ACCEPT") {
+        if (trip.quotedFare !== undefined) {
+          updatePayload.fare = trip.quotedFare;
+          updatePayload.quotedFare = trip.quotedFare;
+        }
+      } else if (action === "DENY") {
+        updatePayload.cancelledAt = trip.cancelledAt;
+        updatePayload.cancellationReason = trip.cancellationReason;
+      } else {
+        updatePayload.counterOffer = trip.counterOffer;
+        updatePayload.counterOfferedAt = trip.counterOfferedAt;
+        updatePayload.counterOfferNote = trip.counterOfferNote;
+      }
+
+      await Trip.updateMany(
+        { $or: [{ _id: masterIdObj }, { parentRequestId: masterIdObj }] },
+        { $set: updatePayload }
+      );
+
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user.userId),
         actorRole: req.user.role,
