@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import { Trip } from "../models/Trip.js";
-import { parseCentralDateTime } from "./dateUtils.js";
+import { getCentralTodayStr, parseCentralDateTime } from "./dateUtils.js";
 
 export async function generateRecurringTripsForMaster(masterTrip: any) {
   if (!masterTrip || !masterTrip._id) return;
@@ -38,6 +38,18 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
 
   if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return;
 
+  const todayStr = getCentralTodayStr(); // YYYY-MM-DD in America/Chicago
+
+  // Remove existing pending/future child trips (only today or future, not completed or past)
+  await Trip.deleteMany({
+    parentRequestId: masterTrip._id,
+    $or: [
+      { pickupDate: { $gte: todayStr } },
+      { pickupDate: { $exists: false } },
+    ],
+    status: { $in: ["REQUESTED", "QUOTE_SENT", "QUOTE_COUNTERED", "QUOTE_ACCEPTED", "ACCEPTED"] },
+  });
+
   const dayMap: Record<number, string[]> = {
     0: ["sunday", "sun"],
     1: ["monday", "mon"],
@@ -48,103 +60,112 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
     6: ["saturday", "sat"],
   };
 
-  // Remove existing pending/future child trips for this master request before re-generating
-  await Trip.deleteMany({
-    parentRequestId: masterTrip._id,
-    status: { $in: ["REQUESTED", "QUOTE_SENT", "QUOTE_COUNTERED", "QUOTE_ACCEPTED", "ACCEPTED"] },
-  });
-
   const childDocs: any[] = [];
   const currentD = new Date(startD);
 
+  // Fetch dates that already have completed or in-progress trips for this parent request to avoid duplicate generation
+  const existingCompletedOrActiveTrips = await Trip.find({
+    parentRequestId: masterTrip._id,
+    status: { $in: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING"] },
+  }).select("pickupDate isReturnLeg").lean();
+
+  const completedKeySet = new Set(
+    existingCompletedOrActiveTrips.map((t) => `${t.pickupDate}_${Boolean(t.isReturnLeg)}`)
+  );
+
   while (currentD <= endD) {
-    const dayOfWeek = currentD.getDay();
-    const dayKeywords = dayMap[dayOfWeek] || [];
+    const year = currentD.getFullYear();
+    const month = String(currentD.getMonth() + 1).padStart(2, "0");
+    const day = String(currentD.getDate()).padStart(2, "0");
+    const dateIsoStr = `${year}-${month}-${day}`;
 
-    const matchesDay =
-      recurringDaysInput.length === 0 ||
-      recurringDaysInput.some((userDay: string) => {
-        return dayKeywords.some((kw) => userDay.toLowerCase() === kw || userDay.toLowerCase().startsWith(kw));
-      });
+    // Recreate trips ONLY for future/today dates (dateIsoStr >= todayStr)
+    if (dateIsoStr >= todayStr) {
+      const dayOfWeek = currentD.getDay();
+      const dayKeywords = dayMap[dayOfWeek] || [];
 
-    if (matchesDay) {
-      const year = currentD.getFullYear();
-      const month = String(currentD.getMonth() + 1).padStart(2, "0");
-      const day = String(currentD.getDate()).padStart(2, "0");
-      const dateIsoStr = `${year}-${month}-${day}`;
-
-      const outboundPickupTime = masterTrip.pickupTime || masterTrip.recurringPickupTime || "08:00 AM";
-      const outboundScheduledTime = parseCentralDateTime(outboundPickupTime, dateIsoStr);
-
-      const masterId = new mongoose.Types.ObjectId(masterTrip._id.toString());
-      const passengerId = masterTrip.passengerId
-        ? new mongoose.Types.ObjectId((masterTrip.passengerId._id || masterTrip.passengerId).toString())
-        : undefined;
-      const driverId = masterTrip.driverId
-        ? new mongoose.Types.ObjectId((masterTrip.driverId._id || masterTrip.driverId).toString())
-        : undefined;
-
-      const baseFields = {
-        parentRequestId: masterId,
-        passengerId,
-        driverId,
-        status: driverId ? "ACCEPTED" : (masterTrip.status || "REQUESTED"),
-        assignedAt: masterTrip.assignedAt,
-        acceptedAt: masterTrip.acceptedAt,
-        fare: masterTrip.fare,
-        quotedFare: masterTrip.quotedFare,
-        fullName: masterTrip.fullName,
-        phoneNumber: masterTrip.phoneNumber,
-        email: masterTrip.email,
-        dateOfBirth: masterTrip.dateOfBirth,
-        emergencyContactName: masterTrip.emergencyContactName,
-        emergencyContactPhone: masterTrip.emergencyContactPhone,
-        relationship: masterTrip.relationship,
-        schedule: "recurring",
-        recurringDays: masterTrip.recurringDays,
-        startDate: startDateStr,
-        endDate: endDateStr,
-        mobilityOptions: masterTrip.mobilityOptions,
-        specialInstructions: masterTrip.specialInstructions,
-        accessInformation: masterTrip.accessInformation,
-        driverNotes: masterTrip.driverNotes,
-        insuranceName: masterTrip.insuranceName,
-        authNumber: masterTrip.authNumber,
-        privatePay: masterTrip.privatePay,
-        requestSource: masterTrip.requestSource,
-      };
-
-      // 1. Outbound Leg
-      childDocs.push({
-        ...baseFields,
-        tripType: isRoundTrip ? "round-trip" : (masterTrip.tripType || "one-way"),
-        isReturnLeg: false,
-        legType: "OUTBOUND",
-        pickupDate: dateIsoStr,
-        pickupTime: outboundPickupTime,
-        scheduledTime: outboundScheduledTime,
-        pickupLocation: masterTrip.pickupLocation,
-        dropoffLocation: masterTrip.dropoffLocation,
-      });
-
-      // 2. Return Leg (If Round-Trip)
-      if (isRoundTrip) {
-        const returnTime = masterTrip.returnPickupTime || "05:00 PM";
-        const returnScheduledTime = parseCentralDateTime(returnTime, dateIsoStr);
-        const returnPickupAddr = masterTrip.returnPickupAddress || masterTrip.dropoffLocation?.address || masterTrip.pickupLocation?.address;
-        const returnDropoffAddr = masterTrip.returnDestinationAddress || masterTrip.pickupLocation?.address || masterTrip.dropoffLocation?.address;
-
-        childDocs.push({
-          ...baseFields,
-          tripType: "round-trip",
-          isReturnLeg: true,
-          legType: "RETURN",
-          pickupDate: dateIsoStr,
-          pickupTime: returnTime,
-          scheduledTime: returnScheduledTime,
-          pickupLocation: { address: returnPickupAddr },
-          dropoffLocation: { address: returnDropoffAddr },
+      const matchesDay =
+        recurringDaysInput.length === 0 ||
+        recurringDaysInput.some((userDay: string) => {
+          return dayKeywords.some((kw) => userDay.toLowerCase() === kw || userDay.toLowerCase().startsWith(kw));
         });
+
+      if (matchesDay) {
+        const outboundPickupTime = masterTrip.pickupTime || masterTrip.recurringPickupTime || "08:00 AM";
+        const outboundScheduledTime = parseCentralDateTime(outboundPickupTime, dateIsoStr);
+
+        const masterId = new mongoose.Types.ObjectId(masterTrip._id.toString());
+        const passengerId = masterTrip.passengerId
+          ? new mongoose.Types.ObjectId((masterTrip.passengerId._id || masterTrip.passengerId).toString())
+          : undefined;
+        const driverId = masterTrip.driverId
+          ? new mongoose.Types.ObjectId((masterTrip.driverId._id || masterTrip.driverId).toString())
+          : undefined;
+
+        const baseFields = {
+          parentRequestId: masterId,
+          passengerId,
+          driverId,
+          status: driverId ? "ACCEPTED" : (masterTrip.status || "REQUESTED"),
+          assignedAt: masterTrip.assignedAt,
+          acceptedAt: masterTrip.acceptedAt,
+          fare: masterTrip.fare,
+          quotedFare: masterTrip.quotedFare,
+          fullName: masterTrip.fullName,
+          phoneNumber: masterTrip.phoneNumber,
+          email: masterTrip.email,
+          dateOfBirth: masterTrip.dateOfBirth,
+          emergencyContactName: masterTrip.emergencyContactName,
+          emergencyContactPhone: masterTrip.emergencyContactPhone,
+          relationship: masterTrip.relationship,
+          schedule: "recurring",
+          recurringDays: masterTrip.recurringDays,
+          startDate: startDateStr,
+          endDate: endDateStr,
+          mobilityOptions: masterTrip.mobilityOptions,
+          specialInstructions: masterTrip.specialInstructions,
+          accessInformation: masterTrip.accessInformation,
+          driverNotes: masterTrip.driverNotes,
+          insuranceName: masterTrip.insuranceName,
+          authNumber: masterTrip.authNumber,
+          privatePay: masterTrip.privatePay,
+          requestSource: masterTrip.requestSource,
+        };
+
+        // 1. Outbound Leg (if not already completed/active)
+        if (!completedKeySet.has(`${dateIsoStr}_false`)) {
+          childDocs.push({
+            ...baseFields,
+            tripType: isRoundTrip ? "round-trip" : (masterTrip.tripType || "one-way"),
+            isReturnLeg: false,
+            legType: "OUTBOUND",
+            pickupDate: dateIsoStr,
+            pickupTime: outboundPickupTime,
+            scheduledTime: outboundScheduledTime,
+            pickupLocation: masterTrip.pickupLocation,
+            dropoffLocation: masterTrip.dropoffLocation,
+          });
+        }
+
+        // 2. Return Leg (If Round-Trip and not already completed/active)
+        if (isRoundTrip && !completedKeySet.has(`${dateIsoStr}_true`)) {
+          const returnTime = masterTrip.returnPickupTime || "05:00 PM";
+          const returnScheduledTime = parseCentralDateTime(returnTime, dateIsoStr);
+          const returnPickupAddr = masterTrip.returnPickupAddress || masterTrip.dropoffLocation?.address || masterTrip.pickupLocation?.address;
+          const returnDropoffAddr = masterTrip.returnDestinationAddress || masterTrip.pickupLocation?.address || masterTrip.dropoffLocation?.address;
+
+          childDocs.push({
+            ...baseFields,
+            tripType: "round-trip",
+            isReturnLeg: true,
+            legType: "RETURN",
+            pickupDate: dateIsoStr,
+            pickupTime: returnTime,
+            scheduledTime: returnScheduledTime,
+            pickupLocation: { address: returnPickupAddr },
+            dropoffLocation: { address: returnDropoffAddr },
+          });
+        }
       }
     }
 
