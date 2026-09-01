@@ -734,6 +734,44 @@ export class AdminController {
     }
   }
 
+  async regenerateTrips(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      await generateRecurringTripsForMaster(trip);
+
+      const count = await Trip.countDocuments({ parentRequestId: trip._id });
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_REGENERATED_TRIPS",
+        resourceType: "Trip",
+        resourceId: id,
+        requestId: req.requestId,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: `Successfully regenerated ${count} trip legs for this request`,
+        count,
+        data: trip,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getTripById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = req.params.id as string;
