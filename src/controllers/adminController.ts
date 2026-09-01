@@ -674,6 +674,9 @@ export class AdminController {
             driverNotes: trip.driverNotes,
             specialInstructions: trip.specialInstructions,
             mobilityOptions: trip.mobilityOptions,
+            returnPickupTime: trip.returnPickupTime,
+            returnPickupAddress: trip.returnPickupAddress,
+            returnDestinationAddress: trip.returnDestinationAddress,
           }
         );
         await generateRecurringTripsForMaster(trip);
