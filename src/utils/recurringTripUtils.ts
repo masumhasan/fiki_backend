@@ -26,17 +26,43 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
     masterTrip.tripType === "round_trip" ||
     masterTrip.isRoundTrip === true;
 
-  const parseDateParts = (str: string) => {
-    const parts = str.split("-").map(Number);
-    if (parts.length === 3) return new Date(parts[0], parts[1] - 1, parts[2]);
-    const d = new Date(str);
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const parseDateParts = (str: any): { year: number; month: number; day: number } | null => {
+    if (!str) return null;
+    const raw = String(str).trim();
+
+    // 1. If string starts with YYYY-MM-DD
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+    if (match) {
+      return {
+        year: parseInt(match[1], 10),
+        month: parseInt(match[2], 10),
+        day: parseInt(match[3], 10),
+      };
+    }
+
+    // 2. Fallback: Parse date using America/Chicago timezone
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return null;
+
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Chicago",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(d);
+
+    const year = parseInt(parts.find((p) => p.type === "year")?.value || "0", 10);
+    const month = parseInt(parts.find((p) => p.type === "month")?.value || "0", 10);
+    const day = parseInt(parts.find((p) => p.type === "day")?.value || "0", 10);
+
+    if (!year || !month || !day) return null;
+    return { year, month, day };
   };
 
-  const startD = parseDateParts(startDateStr);
-  const endD = parseDateParts(endDateStr);
+  const startParts = parseDateParts(startDateStr);
+  const endParts = parseDateParts(endDateStr);
 
-  if (isNaN(startD.getTime()) || isNaN(endD.getTime())) return;
+  if (!startParts || !endParts) return;
 
   // Delete all old uncompleted child trips for this master request before recreating
   await Trip.deleteMany({
@@ -55,7 +81,8 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
   };
 
   const childDocs: any[] = [];
-  const currentD = new Date(startD);
+  let currentUtc = new Date(Date.UTC(startParts.year, startParts.month - 1, startParts.day));
+  const endUtc = new Date(Date.UTC(endParts.year, endParts.month - 1, endParts.day));
 
   // Fetch dates that already have completed or in-progress trips for this parent request to avoid duplicate generation
   const existingCompletedOrActiveTrips = await Trip.find({
@@ -67,13 +94,13 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
     existingCompletedOrActiveTrips.map((t) => `${t.pickupDate}_${Boolean(t.isReturnLeg)}`)
   );
 
-  while (currentD <= endD) {
-    const year = currentD.getFullYear();
-    const month = String(currentD.getMonth() + 1).padStart(2, "0");
-    const day = String(currentD.getDate()).padStart(2, "0");
+  while (currentUtc <= endUtc) {
+    const year = currentUtc.getUTCFullYear();
+    const month = String(currentUtc.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(currentUtc.getUTCDate()).padStart(2, "0");
     const dateIsoStr = `${year}-${month}-${day}`;
 
-    const dayOfWeek = currentD.getDay();
+    const dayOfWeek = currentUtc.getUTCDay();
     const dayKeywords = dayMap[dayOfWeek] || [];
 
     const matchesDay =
@@ -163,7 +190,7 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
       }
     }
 
-    currentD.setDate(currentD.getDate() + 1);
+    currentUtc.setUTCDate(currentUtc.getUTCDate() + 1);
   }
 
   if (childDocs.length > 0) {

@@ -10,6 +10,7 @@ import { Setting } from "../models/Setting.js";
 import bcrypt from "bcryptjs";
 import { getFortnightlyPeriods } from "./driverController.js";
 import { generateRecurringTripsForMaster } from "../utils/recurringTripUtils.js";
+import { parseCentralDateTime } from "../utils/dateUtils.js";
 
 const updateDriverStatusSchema = z.object({
   approvalStatus: z.enum(["APPROVED", "REJECTED"]).optional(),
@@ -505,7 +506,7 @@ export class AdminController {
 
       const sDate = tripData.startDate || tripData.pickupDate || tripData.recurringStartDate;
       const eDate = tripData.endDate || tripData.returnDate || tripData.recurringEndDate;
-      const scheduledTime = sDate ? new Date(`${sDate}T${tripData.pickupTime || "09:00"}`) : undefined;
+      const scheduledTime = sDate ? parseCentralDateTime(tripData.pickupTime || "09:00", sDate) : undefined;
 
       const { fare, pickupAddress, destinationAddress, ...restOfTripData } = tripData;
 

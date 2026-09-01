@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AuditLog } from "../models/AuditLog.js";
 import { Trip } from "../models/Trip.js";
 import { generateRecurringTripsForMaster } from "../utils/recurringTripUtils.js";
+import { parseCentralDateTime } from "../utils/dateUtils.js";
 
 const createRideSchema = z.object({
   // Passenger Information
@@ -106,7 +107,7 @@ export class TripController {
       const tripData = parsed.data;
       const sDate = tripData.startDate || tripData.pickupDate || tripData.recurringStartDate;
       const eDate = tripData.endDate || tripData.returnDate || tripData.recurringEndDate;
-      const scheduledTime = sDate ? new Date(`${sDate}T${tripData.pickupTime || "09:00"}`) : undefined;
+      const scheduledTime = sDate ? parseCentralDateTime(tripData.pickupTime || "09:00", sDate) : undefined;
 
       const trip = await Trip.create({
         passengerId: req.user.userId,
