@@ -714,8 +714,14 @@ export class AdminController {
       }
 
       const targetIdObj = new mongoose.Types.ObjectId(id);
+      const masterIdObj = trip.parentRequestId ? new mongoose.Types.ObjectId(trip.parentRequestId.toString()) : targetIdObj;
+
       await Trip.deleteMany({
-        $or: [{ _id: targetIdObj }, { parentRequestId: targetIdObj }],
+        $or: [
+          { _id: masterIdObj },
+          { parentRequestId: masterIdObj },
+          { _id: targetIdObj },
+        ],
       });
 
       await AuditLog.create({
