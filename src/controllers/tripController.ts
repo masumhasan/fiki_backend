@@ -3,6 +3,7 @@ import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
 import { AuditLog } from "../models/AuditLog.js";
 import { Trip } from "../models/Trip.js";
+import { generateRecurringTripsForMaster } from "../utils/recurringTripUtils.js";
 
 const createRideSchema = z.object({
   // Passenger Information
@@ -123,6 +124,8 @@ export class TripController {
         requestSource: tripData.requestSource || "LANDING",
         ...tripData,
       });
+
+      await generateRecurringTripsForMaster(trip);
 
       res.status(201).json({
         success: true,

@@ -121,6 +121,11 @@ export interface ITrip extends Document {
   caseManagerName?: string;
   caseManagerPhone?: string;
   caseManagerEmail?: string;
+
+  // Recurring Legs & Hierarchy
+  parentRequestId?: mongoose.Types.ObjectId;
+  isReturnLeg?: boolean;
+  legType?: "OUTBOUND" | "RETURN";
 }
 
 const tripSchema = new Schema<ITrip>(
@@ -254,6 +259,11 @@ const tripSchema = new Schema<ITrip>(
     caseManagerName: { type: String },
     caseManagerPhone: { type: String },
     caseManagerEmail: { type: String },
+
+    // Recurring Legs & Hierarchy
+    parentRequestId: { type: Schema.Types.ObjectId, ref: "Trip" },
+    isReturnLeg: { type: Boolean },
+    legType: { type: String },
   },
   {
     timestamps: true,
@@ -266,4 +276,3 @@ tripSchema.index({ completedAt: -1, status: 1 });
 tripSchema.index({ createdAt: -1 });
 
 export const Trip = mongoose.model<ITrip>("Trip", tripSchema);
-

@@ -9,6 +9,7 @@ import { User } from "../models/User.js";
 import { Setting } from "../models/Setting.js";
 import bcrypt from "bcryptjs";
 import { getFortnightlyPeriods } from "./driverController.js";
+import { generateRecurringTripsForMaster } from "../utils/recurringTripUtils.js";
 
 const updateDriverStatusSchema = z.object({
   approvalStatus: z.enum(["APPROVED", "REJECTED"]).optional(),
@@ -527,6 +528,8 @@ export class AdminController {
         ...restOfTripData,
       });
 
+      await generateRecurringTripsForMaster(trip);
+
       res.status(201).json({
         success: true,
         data: trip,
@@ -604,6 +607,16 @@ export class AdminController {
       if (!trip.acceptedAt) trip.acceptedAt = now;
       await trip.save();
 
+      await Trip.updateMany(
+        { parentRequestId: trip._id },
+        { driverId: driver._id, status: "ACCEPTED", assignedAt: now, acceptedAt: now }
+      );
+
+      const existingChildCount = await Trip.countDocuments({ parentRequestId: trip._id });
+      if (existingChildCount === 0) {
+        await generateRecurringTripsForMaster(trip);
+      }
+
       await DriverProfile.findOneAndUpdate(
         { userId: driver._id },
         { availabilityStatus: "ASSIGNED" }
@@ -617,6 +630,104 @@ export class AdminController {
       res.status(200).json({
         success: true,
         data: populatedTrip,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateTrip(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      const previousState = trip.toObject();
+      const body = req.body || {};
+
+      if (body.pickupAddress) {
+        trip.pickupLocation = { address: body.pickupAddress };
+      }
+      if (body.destinationAddress) {
+        trip.dropoffLocation = { address: body.destinationAddress };
+      }
+
+      Object.assign(trip, body);
+      await trip.save();
+
+      if (trip.parentRequestId) {
+        // Single child trip updated
+      } else {
+        // Master request updated: sync child trips
+        await Trip.updateMany(
+          { parentRequestId: trip._id, status: { $in: ["REQUESTED", "QUOTE_SENT", "QUOTE_COUNTERED", "QUOTE_ACCEPTED", "ACCEPTED"] } },
+          {
+            fare: trip.fare,
+            driverNotes: trip.driverNotes,
+            specialInstructions: trip.specialInstructions,
+            mobilityOptions: trip.mobilityOptions,
+          }
+        );
+        await generateRecurringTripsForMaster(trip);
+      }
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_UPDATED_TRIP",
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        previousState,
+        newState: trip.toObject(),
+        requestId: req.requestId,
+      });
+
+      res.status(200).json({ success: true, data: trip });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deleteTrip(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      const targetIdObj = new mongoose.Types.ObjectId(id);
+      await Trip.deleteMany({
+        $or: [{ _id: targetIdObj }, { parentRequestId: targetIdObj }],
+      });
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_DELETED_TRIP",
+        resourceType: "Trip",
+        resourceId: id,
+        previousState: { status: trip.status, fare: trip.fare, fullName: trip.fullName },
+        requestId: req.requestId,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: "Trip and all associated recurring instances deleted successfully",
       });
     } catch (error) {
       next(error);
