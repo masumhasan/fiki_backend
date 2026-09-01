@@ -164,79 +164,139 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
   const todayStr = getCentralTodayStr(now);
   const todayAbbr = getCentralDayAbbr(now);
 
-  // --- 1. Check one-time overrides first ---
-  let override: any = null;
-  const oneTimeChanges: any[] = profile?.oneTimeChanges || [];
-  for (const ch of oneTimeChanges) {
-    if (!ch?.date) continue;
-    const chDate = getCentralTodayStr(new Date(ch.date));
-    if (chDate === todayStr) {
-      override = ch;
-      break;
+  function checkDaySchedule(dateStr: string, dayAbbr: string) {
+    let override: any = null;
+    const oneTimeChanges: any[] = profile?.oneTimeChanges || [];
+    for (const ch of oneTimeChanges) {
+      if (!ch?.date) continue;
+      const chDate = getCentralTodayStr(new Date(ch.date));
+      if (chDate === dateStr) {
+        override = ch;
+        break;
+      }
     }
-  }
 
-  // --- 2. Resolve effective schedule ---
-  let isWorkingDay: boolean;
-  let startTime: string;
-  let endTime: string;
-  let isOneTimeOverride = false;
+    let isWorkingDay: boolean;
+    let startTime: string;
+    let endTime: string;
+    let isOneTimeOverride = false;
 
-  if (override !== null) {
-    isOneTimeOverride = true;
-    isWorkingDay = override.working === true;
-    startTime = override.startTime || "08:00 AM";
-    endTime   = override.endTime   || "04:00 PM";
-  } else {
-    const weeklySchedule: any[] = profile?.weeklySchedule || [];
-    const dayEntry = weeklySchedule.find((d: any) => d.day === todayAbbr);
-    isWorkingDay = dayEntry ? dayEntry.working !== false : false;
-    startTime = dayEntry?.startTime || "08:00 AM";
-    endTime   = dayEntry?.endTime   || "04:00 PM";
-  }
+    if (override !== null) {
+      isOneTimeOverride = true;
+      isWorkingDay = override.working === true;
+      startTime = override.startTime || "08:00 AM";
+      endTime   = override.endTime   || "04:00 PM";
+    } else {
+      const weeklySchedule: any[] = profile?.weeklySchedule || [];
+      const dayEntry = weeklySchedule.find((d: any) => d.day === dayAbbr);
+      isWorkingDay = dayEntry ? dayEntry.working !== false : false;
+      startTime = dayEntry?.startTime || "08:00 AM";
+      endTime   = dayEntry?.endTime   || "04:00 PM";
+    }
 
-  if (!isWorkingDay) {
+    if (!isWorkingDay) {
+      return {
+        isWorkingDay: false,
+        startTime,
+        endTime,
+        startMs: 0,
+        endMs: 0,
+        isOneTimeOverride,
+      };
+    }
+
+    let startMs = parseCentralDateTime(startTime, dateStr, now).getTime();
+    let endMs   = parseCentralDateTime(endTime, dateStr, now).getTime();
+
+    // If shift is overnight (e.g. 9:00 PM to 5:00 AM), end time is next morning (+24 hours)
+    if (endMs <= startMs) {
+      endMs += 24 * 60 * 60 * 1000;
+    }
+
     return {
-      isWorkingDay: false,
+      isWorkingDay: true,
       startTime,
       endTime,
-      scheduledStartMs: 0,
-      scheduledEndMs: 0,
-      allowStart: false,
-      reason: "Today is your scheduled day off. Contact admin if you need to work today.",
+      startMs,
+      endMs,
       isOneTimeOverride,
     };
   }
 
-  // --- 3. Parse Central timestamps ---
-  const startMs = parseCentralDateTime(startTime, todayStr, now).getTime();
-  const endMs   = parseCentralDateTime(endTime, todayStr, now).getTime();
-  const nowMs   = now.getTime();
+  // 1. Check today's schedule
+  const todaySched = checkDaySchedule(todayStr, todayAbbr);
+  const nowMs = now.getTime();
 
-  // --- 4. Time-window check ---
-  const tooEarly = nowMs < startMs - GRACE_BEFORE_MS;
-  const tooLate  = nowMs > endMs + LATE_CUTOFF_MS;
+  if (todaySched.isWorkingDay) {
+    const tooEarly = nowMs < todaySched.startMs - GRACE_BEFORE_MS;
+    const tooLate  = nowMs > todaySched.endMs + LATE_CUTOFF_MS;
 
-  let allowStart = true;
-  let reason = "";
-
-  if (tooEarly) {
-    allowStart = false;
-    reason = `Your shift starts at ${startTime} Central Time. You can clock in up to 15 minutes before your scheduled start time.`;
-  } else if (tooLate) {
-    allowStart = false;
-    reason = `Your scheduled shift ended at ${endTime} Central Time. The clock-in window has closed. Contact admin if you need a schedule change.`;
+    if (!tooEarly && !tooLate) {
+      return {
+        isWorkingDay: true,
+        startTime: todaySched.startTime,
+        endTime: todaySched.endTime,
+        scheduledStartMs: todaySched.startMs,
+        scheduledEndMs: todaySched.endMs,
+        allowStart: true,
+        reason: "",
+        isOneTimeOverride: todaySched.isOneTimeOverride,
+      };
+    }
   }
 
+  // 2. If not inside today's shift window, check if we are in the early morning continuation of yesterday's overnight shift
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayStr = getCentralTodayStr(yesterday);
+  const yesterdayAbbr = getCentralDayAbbr(yesterday);
+  const yesterdaySched = checkDaySchedule(yesterdayStr, yesterdayAbbr);
+
+  if (yesterdaySched.isWorkingDay) {
+    const tooEarly = nowMs < yesterdaySched.startMs - GRACE_BEFORE_MS;
+    const tooLate  = nowMs > yesterdaySched.endMs + LATE_CUTOFF_MS;
+
+    if (!tooEarly && !tooLate) {
+      return {
+        isWorkingDay: true,
+        startTime: yesterdaySched.startTime,
+        endTime: yesterdaySched.endTime,
+        scheduledStartMs: yesterdaySched.startMs,
+        scheduledEndMs: yesterdaySched.endMs,
+        allowStart: true,
+        reason: "",
+        isOneTimeOverride: yesterdaySched.isOneTimeOverride,
+      };
+    }
+  }
+
+  // 3. Return refusal reason based on today's schedule
+  if (!todaySched.isWorkingDay) {
+    return {
+      isWorkingDay: false,
+      startTime: todaySched.startTime,
+      endTime: todaySched.endTime,
+      scheduledStartMs: 0,
+      scheduledEndMs: 0,
+      allowStart: false,
+      reason: "Today is your scheduled day off. Contact admin if you need to work today.",
+      isOneTimeOverride: todaySched.isOneTimeOverride,
+    };
+  }
+
+  const tooEarly = nowMs < todaySched.startMs - GRACE_BEFORE_MS;
+  const reason = tooEarly
+    ? `Your shift starts at ${todaySched.startTime} Central Time. You can clock in up to 15 minutes before your scheduled start time.`
+    : `Your scheduled shift ended at ${todaySched.endTime} Central Time. The clock-in window has closed. Contact admin if you need a schedule change.`;
+
   return {
-    isWorkingDay,
-    startTime,
-    endTime,
-    scheduledStartMs: startMs,
-    scheduledEndMs: endMs,
-    allowStart,
+    isWorkingDay: true,
+    startTime: todaySched.startTime,
+    endTime: todaySched.endTime,
+    scheduledStartMs: todaySched.startMs,
+    scheduledEndMs: todaySched.endMs,
+    allowStart: false,
     reason,
-    isOneTimeOverride,
+    isOneTimeOverride: todaySched.isOneTimeOverride,
   };
 }
 
