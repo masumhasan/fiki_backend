@@ -545,16 +545,28 @@ export class AdminController {
       const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string, 10) || 1000));
       const skip = (page - 1) * limit;
 
-      const { status } = req.query;
+      const { status, type } = req.query;
       const filter: Record<string, unknown> = {};
       if (status) filter.status = status;
+
+      if (type === "requests" || type === "master") {
+        // Return ONLY master Ride Request container documents
+        filter.parentRequestId = { $exists: false };
+      } else if (type === "trips" || type === "child") {
+        // Return ONLY executable child legs or single trips
+        const masterRecurringIds = await Trip.find({ schedule: "recurring", parentRequestId: { $exists: false } }).distinct("_id");
+        const parentIdsWithChildren = await Trip.find({ parentRequestId: { $in: masterRecurringIds } }).distinct("parentRequestId");
+        if (parentIdsWithChildren.length > 0) {
+          filter._id = { $nin: parentIdsWithChildren };
+        }
+      }
 
       const trips = await Trip.find(filter)
         .populate("passengerId", "name email phone")
         .populate("driverId", "name email phone")
         .skip(skip)
         .limit(limit)
-        .sort({ createdAt: -1 })
+        .sort({ scheduledTime: 1, pickupDate: 1, createdAt: -1 })
         .lean();
 
       const total = await Trip.countDocuments(filter);
@@ -567,7 +579,7 @@ export class AdminController {
             page,
             limit,
             total,
-            totalPages: Math.ceil(total / limit),
+            totalPages: Math.ceil(total / limit) || 1,
           },
         },
       });
