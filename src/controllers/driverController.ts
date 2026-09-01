@@ -583,19 +583,37 @@ export class DriverController {
       const skip = (page - 1) * limit;
 
       const { status } = req.query;
-      const filter: Record<string, unknown> = { driverId: req.user.userId };
+      const driverId = req.user.userId;
+
+      // Exclude master parent container requests when child legs exist
+      const masterRecurringIds = await Trip.find({
+        driverId,
+        schedule: "recurring",
+        parentRequestId: { $exists: false },
+      }).distinct("_id");
+
+      const parentIdsWithChildren = await Trip.find({
+        parentRequestId: { $in: masterRecurringIds },
+      }).distinct("parentRequestId");
+
+      const filter: Record<string, unknown> = { driverId };
+
+      if (parentIdsWithChildren.length > 0) {
+        filter._id = { $nin: parentIdsWithChildren };
+      }
+
       if (status) filter.status = status;
 
       const trips = await Trip.find(filter)
         .populate("passengerId", "name email phone")
-        .sort({ scheduledTime: 1, startDate: 1, createdAt: -1 })
+        .sort({ scheduledTime: 1, pickupDate: 1, startDate: 1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean();
 
       const total = await Trip.countDocuments(filter);
 
-      const allDriverTrips = await Trip.find({ driverId: req.user.userId }).lean();
+      const allDriverTrips = await Trip.find(filter).lean();
       const todayTripsCount = countTodayTripsForDriver(allDriverTrips);
 
       res.status(200).json({
