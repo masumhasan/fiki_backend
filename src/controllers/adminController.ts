@@ -566,7 +566,7 @@ export class AdminController {
         .populate("driverId", "name email phone")
         .skip(skip)
         .limit(limit)
-        .sort({ scheduledTime: 1, pickupDate: 1, createdAt: -1 })
+        .sort({ pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 })
         .lean();
 
       const total = await Trip.countDocuments(filter);
