@@ -2,13 +2,42 @@ import mongoose from "mongoose";
 import { Trip } from "../models/Trip.js";
 import { parseCentralDateTime } from "./dateUtils.js";
 
+export function extractRecurringDays(raw: any): string[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw
+      .flatMap((item: any) => {
+        if (typeof item === "string" && item.includes(",")) {
+          return item.split(",").map((s) => s.trim().toLowerCase());
+        }
+        return String(item).trim().toLowerCase();
+      })
+      .filter(Boolean);
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return extractRecurringDays(parsed);
+        }
+      } catch {}
+    }
+    return trimmed.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  }
+  return [];
+}
+
 export async function generateRecurringTripsForMaster(masterTrip: any) {
   if (!masterTrip || !masterTrip._id) return;
+
+  const recurringDaysInput = extractRecurringDays(masterTrip.recurringDays);
 
   const isRecurring =
     masterTrip.schedule === "recurring" ||
     masterTrip.tripType === "recurring" ||
-    (Array.isArray(masterTrip.recurringDays) && masterTrip.recurringDays.length > 0);
+    recurringDaysInput.length > 0;
 
   if (!isRecurring) return;
 
@@ -16,10 +45,6 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
   const endDateStr = masterTrip.endDate || masterTrip.returnDate || masterTrip.recurringEndDate || startDateStr;
 
   if (!startDateStr) return;
-
-  const recurringDaysInput = Array.isArray(masterTrip.recurringDays) && masterTrip.recurringDays.length > 0
-    ? masterTrip.recurringDays.map((d: string) => String(d).trim().toLowerCase())
-    : [];
 
   const isRoundTrip =
     masterTrip.tripType === "round-trip" ||
@@ -106,7 +131,8 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
     const matchesDay =
       recurringDaysInput.length === 0 ||
       recurringDaysInput.some((userDay: string) => {
-        return dayKeywords.some((kw) => userDay.toLowerCase() === kw || userDay.toLowerCase().startsWith(kw));
+        const u = userDay.toLowerCase();
+        return dayKeywords.some((kw) => u === kw || u.startsWith(kw) || kw.startsWith(u));
       });
 
     if (matchesDay) {
