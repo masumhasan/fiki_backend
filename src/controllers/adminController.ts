@@ -314,7 +314,7 @@ export class AdminController {
             fare: t.fare ?? null,
             pickup: t.pickupLocation?.address || null,
             dropoff: t.dropoffLocation?.address || null,
-            passengerName: (t.passengerId as any)?.name || null,
+            passengerName: t.fullName || (t.passengerId as any)?.name || null,
             createdAt: t.createdAt,
           })),
           stats: {
