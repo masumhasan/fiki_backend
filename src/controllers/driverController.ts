@@ -1102,6 +1102,34 @@ export class DriverController {
       await checkAndAutoEndActiveShift(req.user.userId, driverProfile, now);
 
       const todayStr = getCentralTodayStr(now);
+      const dayAbbr = getCentralDayAbbr(now);
+
+      let todaySched: any = null;
+      if (typeof (driverController as any) !== "undefined") {
+        // Fallback if needed
+      }
+
+      // Check oneTimeChanges & weeklySchedule
+      let isWorkingDay = false;
+      let startTime = "08:00 AM";
+      let endTime = "04:00 PM";
+
+      const oneTimeChanges: any[] = driverProfile?.oneTimeChanges || [];
+      const override = oneTimeChanges.find((ch: any) => ch?.date && getCentralTodayStr(new Date(ch.date)) === todayStr);
+
+      if (override) {
+        isWorkingDay = override.working === true;
+        startTime = override.startTime || "08:00 AM";
+        endTime = override.endTime || "04:00 PM";
+      } else {
+        const weeklySchedule: any[] = driverProfile?.weeklySchedule || [];
+        const dayEntry = weeklySchedule.find((d: any) => d.day === dayAbbr);
+        isWorkingDay = dayEntry ? dayEntry.working !== false : true;
+        startTime = dayEntry?.startTime || "08:00 AM";
+        endTime = dayEntry?.endTime || "04:00 PM";
+      }
+
+      const todayScheduleHours = isWorkingDay ? `${startTime} – ${endTime}` : "Day Off";
 
       // First check if there is an in-progress shift
       let shift = await DriverShift.findOne({
@@ -1122,10 +1150,19 @@ export class DriverController {
         pendingEndReport: true,
       }).sort({ createdAt: -1 }).lean();
 
+      const shiftData = shift ? { ...shift, todayScheduleHours } : { todayScheduleHours, status: null };
+
       res.status(200).json({
         success: true,
         data: {
-          shift: shift || null,
+          shift: shiftData,
+          todayScheduleHours,
+          todaySchedule: {
+            startTime,
+            endTime,
+            isWorkingDay,
+            hoursText: todayScheduleHours,
+          },
           pendingEndReportShift: pendingEndReportShift || null,
         },
       });
