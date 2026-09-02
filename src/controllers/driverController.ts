@@ -422,9 +422,34 @@ export async function checkAndAutoEndActiveShift(driverId: string | mongoose.Typ
   const sched = resolveScheduleForDate(profile, activeShift.shiftDate, now);
   if (!sched || !sched.scheduledEndMs) return activeShift;
 
+  const MAX_SHIFT_MS = 24 * 60 * 60 * 1000; // 24 hours safety cap
+
+  // If the shift was started AFTER the scheduled end (overnight/late/emergency start),
+  // do NOT auto-end via the schedule. These are valid out-of-window shifts.
+  // Apply a 24-hour safety cap from actual start time only.
+  if (activeShift.startedAt && activeShift.startedAt.getTime() >= sched.scheduledEndMs) {
+    const elapsedMs = now.getTime() - activeShift.startedAt.getTime();
+    if (elapsedMs <= MAX_SHIFT_MS) {
+      // Still within 24 hours from start — let the shift run normally
+      return activeShift;
+    }
+    // Fallen beyond 24 hours from start — force end as safety measure
+  }
+
   if (now.getTime() > sched.scheduledEndMs) {
+    // Do NOT auto-end if the driver still has active trips in progress.
+    // Drivers must be able to complete any ACCEPTED/en-route/pickup trips.
+    const activeTripCount = await Trip.countDocuments({
+      driverId,
+      status: { $in: ["ACCEPTED", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
+    });
+    if (activeTripCount > 0) {
+      // Hold off auto-ending — driver is mid-trip
+      return activeShift;
+    }
+
     const scheduledEndDate = new Date(sched.scheduledEndMs);
-    const diffMs = scheduledEndDate.getTime() - activeShift.startedAt.getTime();
+    const diffMs = Math.max(0, now.getTime() - activeShift.startedAt.getTime());
     const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
     const hours = Math.floor(totalMinutes / 60);
     const mins = totalMinutes % 60;
