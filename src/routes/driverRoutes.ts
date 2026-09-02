@@ -14,6 +14,7 @@ router.patch("/me/availability", (req, res, next) => driverController.updateAvai
 router.post("/me/location", (req, res, next) => driverController.updateLocation(req, res, next));
 
 router.get("/me/trips", (req, res, next) => driverController.getTrips(req, res, next));
+router.get("/me/trips/active", (req, res, next) => driverController.getActiveTrip(req, res, next));
 router.get("/me/trips/:id", (req, res, next) => driverController.getTripById(req, res, next));
 router.patch("/me/trips/:id/status", (req, res, next) => driverController.updateTripStatus(req, res, next));
 router.patch("/me/trips/:id/notes", (req, res, next) => driverController.updateTripNotes(req, res, next));

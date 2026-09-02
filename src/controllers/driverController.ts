@@ -770,6 +770,33 @@ export class DriverController {
     }
   }
 
+  async getActiveTrip(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const driverId = req.user.userId;
+
+      // Find a single active trip for the driver
+      const activeTrip = await Trip.findOne({
+        driverId,
+        status: { $in: ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
+      })
+        .populate("passengerId", "name email phone")
+        .sort({ updatedAt: -1 })
+        .lean();
+
+      res.status(200).json({
+        success: true,
+        data: activeTrip || null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async updateTripStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {
