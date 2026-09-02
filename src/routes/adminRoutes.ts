@@ -30,6 +30,8 @@ router.post("/trips/:id/cancel", (req, res, next) => adminController.cancelTripA
 router.patch("/trips/:id/assign", (req, res, next) => adminController.assignDriver(req, res, next));
 router.patch("/trips/:id/quote", (req, res, next) => adminController.sendQuote(req, res, next));
 router.post("/trips/:id/counter-response", (req, res, next) => adminController.respondToCounterOffer(req, res, next));
+router.post("/trips/:id/approve", (req, res, next) => adminController.approveRideRequest(req, res, next));
+router.post("/trips/:id/reject", (req, res, next) => adminController.rejectRideRequest(req, res, next));
 
 router.get("/analytics", (req, res, next) => adminController.getAnalytics(req, res, next));
 router.get("/earnings", (req, res, next) => adminController.getDriverEarningsList(req, res, next));

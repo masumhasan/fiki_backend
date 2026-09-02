@@ -148,14 +148,16 @@ export class TripController {
       const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20));
       const skip = (page - 1) * limit;
 
-      const trips = await Trip.find({ passengerId: req.user.userId })
+      const filter = { passengerId: req.user.userId, parentRequestId: { $exists: false } };
+
+      const trips = await Trip.find(filter)
         .populate("driverId", "name email phone")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean();
 
-      const total = await Trip.countDocuments({ passengerId: req.user.userId });
+      const total = await Trip.countDocuments(filter);
 
       res.status(200).json({
         success: true,

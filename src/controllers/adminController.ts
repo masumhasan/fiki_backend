@@ -607,6 +607,17 @@ export class AdminController {
         return;
       }
 
+      if (trip.status !== "ACCEPTED") {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: "RIDE_NOT_APPROVED",
+            message: "Cannot assign driver before approving the ride request. Please approve the request first.",
+          },
+        });
+        return;
+      }
+
       const driver = await User.findOne({ _id: parsed.data.driverId, role: "DRIVER", accountStatus: "ACTIVE" });
       if (!driver) {
         res.status(400).json({ success: false, error: { code: "INVALID_DRIVER", message: "Driver not found or not active" } });
@@ -644,6 +655,87 @@ export class AdminController {
         success: true,
         data: populatedTrip,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async approveRideRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      const previousStatus = trip.status;
+      trip.status = "ACCEPTED";
+      const now = new Date();
+      if (!trip.acceptedAt) trip.acceptedAt = now;
+      await trip.save();
+
+      const masterIdObj = trip.parentRequestId || trip._id;
+      await Trip.updateMany(
+        { $or: [{ _id: masterIdObj }, { parentRequestId: masterIdObj }] },
+        { $set: { status: "ACCEPTED", acceptedAt: now } }
+      );
+
+      const existingChildCount = await Trip.countDocuments({ parentRequestId: masterIdObj });
+      if (existingChildCount === 0) {
+        await generateRecurringTripsForMaster(trip);
+      }
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_APPROVED_RIDE_REQUEST",
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        previousState: { status: previousStatus },
+        newState: { status: trip.status },
+        requestId: req.requestId,
+      });
+
+      res.status(200).json({ success: true, data: trip });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async rejectRideRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      const previousStatus = trip.status;
+      trip.status = "QUOTE_DENIED";
+      trip.cancelledAt = new Date();
+      trip.cancellationReason = req.body?.reason || "Rejected by admin";
+      await trip.save();
+
+      const masterIdObj = trip.parentRequestId || trip._id;
+      await Trip.updateMany(
+        { $or: [{ _id: masterIdObj }, { parentRequestId: masterIdObj }] },
+        { $set: { status: "QUOTE_DENIED", cancelledAt: trip.cancelledAt, cancellationReason: trip.cancellationReason } }
+      );
+
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_REJECTED_RIDE_REQUEST",
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        previousState: { status: previousStatus },
+        newState: { status: trip.status },
+        requestId: req.requestId,
+      });
+
+      res.status(200).json({ success: true, data: trip });
     } catch (error) {
       next(error);
     }
