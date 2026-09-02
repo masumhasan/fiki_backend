@@ -77,7 +77,16 @@ export interface FortnightPeriod {
 }
 
 export function getFortnightlyPeriods(joinDate?: Date, count = 20): FortnightPeriod[] {
-  const anchorCurrentStart = new Date("2026-08-17T00:00:00.000Z");
+  const baseAnchor = new Date("2026-08-17T00:00:00.000Z");
+  const now = new Date();
+  
+  // Calculate how many 14-day periods have passed since the base anchor
+  const msPerFortnight = 14 * 24 * 60 * 60 * 1000;
+  const periodsPassed = Math.floor((now.getTime() - baseAnchor.getTime()) / msPerFortnight);
+  
+  // The current period's start date
+  const anchorCurrentStart = new Date(baseAnchor.getTime() + Math.max(0, periodsPassed) * msPerFortnight);
+
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const minJoinTime = joinDate ? new Date(joinDate).getTime() : 0;
 
