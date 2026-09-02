@@ -318,8 +318,8 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
 
   const tooEarly = nowMs < todaySched.startMs - GRACE_BEFORE_MS;
   const reason = tooEarly
-    ? `Your shift starts at ${todaySched.startTime} Central Time. You can clock in up to 15 minutes before your scheduled start time.`
-    : `Your scheduled shift ended at ${todaySched.endTime} Central Time. The clock-in window has closed. Contact admin if you need a schedule change.`;
+    ? `Your shift starts at ${todaySched.startTime}. You can clock in up to 15 minutes before (${new Date(todaySched.startMs - GRACE_BEFORE_MS).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}).`
+    : `Your shift ended at ${todaySched.endTime}. Clock-in window for today has passed. Contact admin if you need a schedule adjustment.`;
 
   return {
     isWorkingDay: true,
@@ -331,6 +331,122 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
     reason,
     isOneTimeOverride: todaySched.isOneTimeOverride,
   };
+}
+
+export function resolveScheduleForDate(profile: any, dateStr: string, now: Date = new Date()): ScheduleCheckResult {
+  const dateObj = new Date(dateStr + "T00:00:00");
+  const dayAbbr = getCentralDayAbbr(dateObj);
+  const GRACE_BEFORE_MS = 15 * 60 * 1000;
+  const LATE_CUTOFF_MS  = 60 * 60 * 1000;
+
+  const oneTimeChanges: any[] = profile?.oneTimeChanges || [];
+  let override: any = null;
+  for (const ch of oneTimeChanges) {
+    if (!ch?.date) continue;
+    const chDate = getCentralTodayStr(new Date(ch.date));
+    if (chDate === dateStr) {
+      override = ch;
+      break;
+    }
+  }
+
+  let isWorkingDay: boolean;
+  let startTime: string;
+  let endTime: string;
+  let isOneTimeOverride = false;
+
+  if (override !== null) {
+    isOneTimeOverride = true;
+    isWorkingDay = override.working === true;
+    startTime = override.startTime || "08:00 AM";
+    endTime   = override.endTime   || "04:00 PM";
+  } else {
+    const weeklySchedule: any[] = profile?.weeklySchedule || [];
+    const dayEntry = weeklySchedule.find((d: any) => d.day === dayAbbr);
+    isWorkingDay = dayEntry ? dayEntry.working !== false : false;
+    startTime = dayEntry?.startTime || "08:00 AM";
+    endTime   = dayEntry?.endTime   || "04:00 PM";
+  }
+
+  if (!isWorkingDay) {
+    return {
+      isWorkingDay: false,
+      startTime,
+      endTime,
+      scheduledStartMs: 0,
+      scheduledEndMs: 0,
+      allowStart: false,
+      reason: "Scheduled day off.",
+      isOneTimeOverride,
+    };
+  }
+
+  let startMs = parseCentralDateTime(startTime, dateStr, now).getTime();
+  let endMs   = parseCentralDateTime(endTime, dateStr, now).getTime();
+  if (endMs <= startMs) {
+    endMs += 24 * 60 * 60 * 1000;
+  }
+
+  const nowMs = now.getTime();
+  let allowStart = true;
+  let reason = "Shift allowed.";
+
+  if (nowMs < startMs - GRACE_BEFORE_MS) {
+    allowStart = false;
+    reason = `Too early to start shift. Scheduled start time is ${startTime}.`;
+  } else if (nowMs > endMs + LATE_CUTOFF_MS) {
+    allowStart = false;
+    reason = `Shift window has passed. Scheduled end time was ${endTime}.`;
+  }
+
+  return {
+    isWorkingDay: true,
+    startTime,
+    endTime,
+    scheduledStartMs: startMs,
+    scheduledEndMs: endMs,
+    allowStart,
+    reason,
+    isOneTimeOverride,
+  };
+}
+
+export async function checkAndAutoEndActiveShift(driverId: string | mongoose.Types.ObjectId, profile: any, now: Date = new Date()) {
+  const activeShift = await DriverShift.findOne({
+    driverId,
+    status: "IN_PROGRESS",
+  });
+
+  if (!activeShift) return null;
+
+  const sched = resolveScheduleForDate(profile, activeShift.shiftDate, now);
+  if (!sched || !sched.scheduledEndMs) return activeShift;
+
+  if (now.getTime() > sched.scheduledEndMs) {
+    const scheduledEndDate = new Date(sched.scheduledEndMs);
+    const diffMs = scheduledEndDate.getTime() - activeShift.startedAt.getTime();
+    const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    const totalHoursText = `${hours}h ${mins < 10 ? "0" : ""}${mins}m`;
+
+    activeShift.status = "COMPLETED";
+    activeShift.endedAt = scheduledEndDate;
+    activeShift.totalMinutes = totalMinutes;
+    activeShift.totalHoursText = totalHoursText;
+    activeShift.autoEnded = true;
+    activeShift.pendingEndReport = true;
+    await activeShift.save();
+
+    await DriverProfile.findOneAndUpdate(
+      { userId: driverId },
+      { availabilityStatus: "OFFLINE" }
+    );
+
+    return null;
+  }
+
+  return activeShift;
 }
 
 export function countTodayTripsForDriver(trips: any[], now: Date = new Date()): number {
@@ -981,7 +1097,11 @@ export class DriverController {
         return;
       }
 
-      const todayStr = new Date().toISOString().split("T")[0];
+      const driverProfile = await DriverProfile.findOne({ userId: req.user.userId }).lean();
+      const now = new Date();
+      await checkAndAutoEndActiveShift(req.user.userId, driverProfile, now);
+
+      const todayStr = getCentralTodayStr(now);
 
       // First check if there is an in-progress shift
       let shift = await DriverShift.findOne({
@@ -997,9 +1117,17 @@ export class DriverController {
         }).sort({ createdAt: -1 }).lean();
       }
 
+      const pendingEndReportShift = await DriverShift.findOne({
+        driverId: req.user.userId,
+        pendingEndReport: true,
+      }).sort({ createdAt: -1 }).lean();
+
       res.status(200).json({
         success: true,
-        data: { shift: shift || null },
+        data: {
+          shift: shift || null,
+          pendingEndReportShift: pendingEndReportShift || null,
+        },
       });
     } catch (error) {
       next(error);
@@ -1015,6 +1143,11 @@ export class DriverController {
 
       const driverId = req.user.userId;
       const now = new Date();
+      const driverProfile = await DriverProfile.findOne({ userId: driverId }).lean();
+      
+      // Check & auto end shift if scheduled end time passed
+      await checkAndAutoEndActiveShift(driverId, driverProfile, now);
+
       const todayStr = getCentralTodayStr(now);
       const { start: todayStart, end: todayEnd } = getCentralDayBounds(todayStr, now);
 
@@ -1024,8 +1157,8 @@ export class DriverController {
       const startOfWeek = new Date(todayStart);
       startOfWeek.setDate(startOfWeek.getDate() - distanceToMon);
 
-      // Fetch today's trips, shift, week shifts, and driver profile concurrently
-      const [todayTrips, todayShift, weekShifts, driverProfile] = await Promise.all([
+      // Fetch today's trips, shift, week shifts, and pending end report shift concurrently
+      const [todayTrips, todayShift, weekShifts, pendingEndReportShift] = await Promise.all([
         Trip.find({
           driverId,
           $or: [
@@ -1047,7 +1180,10 @@ export class DriverController {
           createdAt: { $gte: startOfWeek }
         }).lean(),
 
-        DriverProfile.findOne({ userId: driverId }).lean()
+        DriverShift.findOne({
+          driverId,
+          pendingEndReport: true,
+        }).sort({ createdAt: -1 }).lean()
       ]);
 
       // Schedule config from DriverProfile
@@ -1127,11 +1263,11 @@ export class DriverController {
 
         if (s) {
           if (s.startedAt && s.endedAt) {
-            const startT = new Date(s.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-            const endT = new Date(s.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            const startT = new Date(s.startedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "America/Chicago" });
+            const endT = new Date(s.endedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "America/Chicago" });
             shiftHours = `${startT} – ${endT}`;
           } else if (s.startedAt) {
-            const startT = new Date(s.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            const startT = new Date(s.startedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "America/Chicago" });
             shiftHours = `${startT} – In Progress`;
           }
 
@@ -1143,26 +1279,45 @@ export class DriverController {
             totalHours = `${Math.floor(mins / 60)}h ${mins % 60}m`;
           }
 
-          if (s.status === "COMPLETED") {
-            attendance = "Present";
+          if (s.status === "COMPLETED" || s.status === "IN_PROGRESS") {
             approval = "Approved";
-          } else if (s.status === "IN_PROGRESS") {
-            attendance = "In Progress";
-            approval = "Pending";
+            if (s.status === "IN_PROGRESS") {
+              attendance = "In Progress";
+              approval = "Pending";
+            } else {
+              // Calculate Present vs Late based on 15 min grace period
+              const schedForDay = resolveScheduleForDate(driverProfile, dateStr, now);
+              if (schedForDay && schedForDay.scheduledStartMs && s.startedAt) {
+                const startedMs = new Date(s.startedAt).getTime();
+                const graceMs = 15 * 60 * 1000;
+                if (startedMs <= schedForDay.scheduledStartMs + graceMs) {
+                  attendance = "Present";
+                } else {
+                  attendance = "Late";
+                }
+              } else {
+                attendance = "Present";
+              }
+            }
           }
         } else {
-          if (d < todayStart) {
-            attendance = dayCfg.isWorking ? "Absent" : "Off";
+          const schedForDay = resolveScheduleForDate(driverProfile, dateStr, now);
+          if (!dayCfg.isWorking) {
+            attendance = "Off";
             approval = "Approved";
             totalHours = "—";
-          } else if (d.getTime() === todayStart.getTime()) {
-            attendance = todayShift?.status === "IN_PROGRESS" ? "In Progress" : dayCfg.isWorking ? "Pending" : "Off";
+          } else if (schedForDay && schedForDay.scheduledStartMs && now.getTime() > schedForDay.scheduledStartMs) {
+            attendance = "Absent";
+            approval = "Approved";
+            totalHours = "—";
+          } else if (dateStr === todayStr) {
+            attendance = "Pending";
             approval = "Pending";
-            totalHours = dayCfg.isWorking ? "8h" : "—";
+            totalHours = "8h";
           } else {
-            attendance = dayCfg.isWorking ? "Scheduled" : "Off";
+            attendance = "Scheduled";
             approval = "Pending";
-            totalHours = dayCfg.isWorking ? "8h" : "—";
+            totalHours = "8h";
           }
         }
 
@@ -1180,6 +1335,7 @@ export class DriverController {
         success: true,
         data: {
           todayShift: todayShift || null,
+          pendingEndReportShift: pendingEndReportShift || null,
           todaySchedule,
           todayScheduleCheck: resolveScheduleForToday(driverProfile),
           tripSummary,
@@ -1224,6 +1380,23 @@ export class DriverController {
         return;
       }
 
+      // Check if driver has a pending end shift report from auto-ended shift
+      const pendingReport = await DriverShift.findOne({
+        driverId: req.user.userId,
+        pendingEndReport: true,
+      });
+
+      if (pendingReport) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: "PENDING_SHIFT_REPORT",
+            message: "Please complete your previous shift end report before starting a new shift.",
+          },
+        });
+        return;
+      }
+
       // Check if driver already has an in-progress shift
       const existing = await DriverShift.findOne({
         driverId: req.user.userId,
@@ -1241,9 +1414,7 @@ export class DriverController {
       const profile = await DriverProfile.findOne({ userId: req.user.userId }).lean();
       const todayStr = getCentralTodayStr();
 
-      // ── Schedule Enforcement ──────────────────────────────────────────────
-      // Check if driver is allowed to start a shift right now.
-      // Existing in-progress shifts are never blocked (driver can always end).
+      // Schedule Enforcement
       const scheduleCheck = resolveScheduleForToday(profile);
       if (!scheduleCheck.allowStart) {
         res.status(403).json({
@@ -1328,20 +1499,27 @@ export class DriverController {
         return;
       }
 
-      const shift = await DriverShift.findOne({
+      let shift = await DriverShift.findOne({
         driverId: req.user.userId,
         status: "IN_PROGRESS",
       });
 
       if (!shift) {
+        shift = await DriverShift.findOne({
+          driverId: req.user.userId,
+          pendingEndReport: true,
+        }).sort({ createdAt: -1 });
+      }
+
+      if (!shift) {
         res.status(404).json({
           success: false,
-          error: { code: "NO_ACTIVE_SHIFT", message: "No active shift found to end" },
+          error: { code: "NO_ACTIVE_SHIFT", message: "No active shift or pending end report found" },
         });
         return;
       }
 
-      const endedAt = new Date();
+      const endedAt = shift.endedAt || new Date();
       const diffMs = endedAt.getTime() - shift.startedAt.getTime();
       const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
       const hours = Math.floor(totalMinutes / 60);
@@ -1360,10 +1538,10 @@ export class DriverController {
       shift.endNotes = notes;
       shift.endPhotoUrl = collectedEndPhotos[0] || photoUrl || endPhotoUrl || "";
       shift.endPhotoUrls = collectedEndPhotos;
+      shift.pendingEndReport = false;
 
       await shift.save();
 
-      // Mark driver availability as OFFLINE
       await DriverProfile.findOneAndUpdate(
         { userId: req.user.userId },
         { availabilityStatus: "OFFLINE" }

@@ -8,6 +8,8 @@ export interface IDriverShift extends Document {
   status: ShiftStatus;
   startedAt: Date;
   endedAt?: Date;
+  autoEnded?: boolean;
+  pendingEndReport?: boolean;
   totalMinutes?: number;
   totalHoursText?: string; // e.g. "8h 04m"
   startingOdometer: number;
@@ -58,6 +60,14 @@ const driverShiftSchema = new Schema<IDriverShift>(
     },
     endedAt: {
       type: Date,
+    },
+    autoEnded: {
+      type: Boolean,
+      default: false,
+    },
+    pendingEndReport: {
+      type: Boolean,
+      default: false,
     },
     totalMinutes: {
       type: Number,

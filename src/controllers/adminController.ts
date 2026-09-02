@@ -2163,7 +2163,7 @@ export class AdminController {
 
             if (actualShift && actualShift.startedAt) {
               const startedDate = new Date(actualShift.startedAt);
-              const isLate = startedDate.getTime() > scheduledStartDate.getTime() + 5 * 60 * 1000; // 5m grace period
+              const isLate = startedDate.getTime() > scheduledStartDate.getTime() + 15 * 60 * 1000; // 15m grace period
 
               if (isLate) {
                 status = "LATE";
