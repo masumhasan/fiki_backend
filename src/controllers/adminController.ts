@@ -600,7 +600,7 @@ export class AdminController {
         
         const userMatches = await mongoose.model("User").find({ name: searchRegex }).distinct("_id");
         
-        filter.$or = [
+        const orConditions: any[] = [
           { fullName: searchRegex },
           { "pickupLocation.address": searchRegex },
           { "dropoffLocation.address": searchRegex },
@@ -610,9 +610,11 @@ export class AdminController {
         ];
 
         if (userMatches.length > 0) {
-          filter.$or.push({ passengerId: { $in: userMatches } });
-          filter.$or.push({ driverId: { $in: userMatches } });
+          orConditions.push({ passengerId: { $in: userMatches } });
+          orConditions.push({ driverId: { $in: userMatches } });
         }
+        
+        filter.$or = orConditions;
       }
 
       const now = new Date();
