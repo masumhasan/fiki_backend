@@ -2159,14 +2159,8 @@ export class AdminController {
 
           const dayDate = new Date(wd.dateStr);
 
-          // Parse scheduled start time Date for comparison
-          const [timePart, period] = startTimeStr.split(" ");
-          const [hStr, mStr] = (timePart || "08:00").split(":");
-          let scheduledHour = parseInt(hStr || "8", 10);
-          if (period === "PM" && scheduledHour < 12) scheduledHour += 12;
-          if (period === "AM" && scheduledHour === 12) scheduledHour = 0;
-          const scheduledStartDate = new Date(dayDate);
-          scheduledStartDate.setHours(scheduledHour, parseInt(mStr || "0", 10), 0, 0);
+          // Parse scheduled start time Date for comparison using central time
+          const scheduledStartDate = parseCentralDateTime(startTimeStr, wd.dateStr);
 
           if (!isWorking) {
             status = "DAY_OFF";
