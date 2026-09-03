@@ -543,7 +543,7 @@ export class AdminController {
   async getTrips(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-      const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string, 10) || 1000));
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
       const skip = (page - 1) * limit;
 
       const { status, type } = req.query;
@@ -562,13 +562,29 @@ export class AdminController {
         }
       }
 
-      const trips = await Trip.find(filter)
-        .populate("passengerId", "name email phone")
-        .populate("driverId", "name email phone")
-        .skip(skip)
-        .limit(limit)
-        .sort({ pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 })
-        .lean();
+      const now = new Date();
+      let trips = await Trip.aggregate([
+        { $match: filter },
+        { 
+          $addFields: {
+            isFuture: {
+              $cond: {
+                if: { $gt: [ { $ifNull: ["$pickupDate", "$startDate"] }, now ] },
+                then: 1,
+                else: 0
+              }
+            }
+          }
+        },
+        { $sort: { isFuture: 1, pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limit }
+      ]);
+      
+      trips = await Trip.populate(trips, [
+        { path: "passengerId", select: "name email phone" },
+        { path: "driverId", select: "name email phone" }
+      ]);
 
       const total = await Trip.countDocuments(filter);
 
