@@ -1411,6 +1411,7 @@ export class AdminController {
           id: uidStr,
           initials,
           name,
+          avatarUrl: u?.avatarUrl || "",
           trips: item.tripsCount,
           rating: "5.0",
           revenue: `$${item.revenueSum.toLocaleString()}`,
@@ -1423,7 +1424,7 @@ export class AdminController {
       if (topDrivers.length === 0) {
         const approvedProfiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).limit(6).lean();
         const appUserIds = approvedProfiles.map((p: any) => p.userId);
-        const appUsers = await User.find({ _id: { $in: appUserIds } }).select("name").lean();
+        const appUsers = await User.find({ _id: { $in: appUserIds } }).select("name avatarUrl").lean();
         const appUserMap = new Map(appUsers.map((u: any) => [u._id.toString(), u]));
 
         topDrivers = approvedProfiles.map((p: any) => {
@@ -1440,6 +1441,7 @@ export class AdminController {
             id: uidStr,
             initials,
             name,
+            avatarUrl: u?.avatarUrl || "",
             trips: p.completedTripsCount || 0,
             rating: "5.0",
             revenue: "$0",
@@ -1516,7 +1518,7 @@ export class AdminController {
       // 7. Driver Status List for Dashboard Card
       const allApprovedProfiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).limit(10).lean();
       const approvedUserIds = allApprovedProfiles.map((p: any) => p.userId);
-      const approvedUsers = await User.find({ _id: { $in: approvedUserIds } }).select("name").lean();
+      const approvedUsers = await User.find({ _id: { $in: approvedUserIds } }).select("name avatarUrl").lean();
       const approvedUserMap = new Map(approvedUsers.map((u: any) => [u._id.toString(), u]));
 
       const driverStatusColors = ["#10ac7b", "#f39200", "#2563eb", "#8345ed", "#0794b5"];
@@ -1540,6 +1542,7 @@ export class AdminController {
           id: uidStr,
           initials,
           name,
+          avatarUrl: u?.avatarUrl || "",
           vehicle: "BMW M3 2022",
           status: statusStr,
           color,
