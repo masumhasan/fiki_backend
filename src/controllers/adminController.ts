@@ -583,8 +583,8 @@ export class AdminController {
       ]);
       
       trips = await Trip.populate(trips, [
-        { path: "passengerId", select: "name email phone" },
-        { path: "driverId", select: "name email phone" }
+        { path: "passengerId", select: "name email phone avatarUrl" },
+        { path: "driverId", select: "name email phone avatarUrl" }
       ]);
 
       const total = await Trip.countDocuments(filter);
@@ -664,8 +664,8 @@ export class AdminController {
       );
 
       const populatedTrip = await Trip.findById(trip._id)
-        .populate("passengerId", "name email phone")
-        .populate("driverId", "name email phone")
+        .populate("passengerId", "name email phone avatarUrl")
+        .populate("driverId", "name email phone avatarUrl")
         .lean();
 
       res.status(200).json({
@@ -916,8 +916,8 @@ export class AdminController {
       }
 
       const trip = await Trip.findById(id)
-        .populate("passengerId", "name email phone")
-        .populate("driverId", "name email phone")
+        .populate("passengerId", "name email phone avatarUrl")
+        .populate("driverId", "name email phone avatarUrl")
         .lean();
 
       if (!trip) {

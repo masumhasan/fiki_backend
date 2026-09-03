@@ -798,7 +798,7 @@ export class DriverController {
       const activeFilter = tab ? getTabFilter(tab as string) : baseFilter;
 
       const trips = await Trip.find(activeFilter)
-        .populate("passengerId", "name email phone")
+        .populate("passengerId", "name email phone avatarUrl")
         .sort({ scheduledTime: 1, pickupDate: 1, startDate: 1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -838,7 +838,7 @@ export class DriverController {
         driverId,
         status: { $in: ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
       })
-        .populate("passengerId", "name email phone")
+        .populate("passengerId", "name email phone avatarUrl")
         .sort({ updatedAt: -1 })
         .lean();
 
@@ -995,7 +995,7 @@ export class DriverController {
       }
 
       const trip = await Trip.findOne({ _id: id, driverId: req.user.userId })
-        .populate("passengerId", "name email phone")
+        .populate("passengerId", "name email phone avatarUrl")
         .lean();
 
       if (!trip) {
