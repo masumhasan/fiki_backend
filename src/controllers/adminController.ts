@@ -1278,7 +1278,7 @@ export class AdminController {
                 }
               ],
               monthlyPerformance: [
-                { $addFields: { resolvedDate: { $toDate: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] } } } },
+                { $addFields: { resolvedDate: { $convert: { input: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } } } },
                 { $match: { resolvedDate: { $gte: startOfYear } } },
                 {
                   $group: {
@@ -1307,7 +1307,7 @@ export class AdminController {
                 }
               ],
               weeklyTripVolume: [
-                { $addFields: { resolvedDate: { $toDate: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] } } } },
+                { $addFields: { resolvedDate: { $convert: { input: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } } } },
                 { $match: { resolvedDate: { $gte: startOfWeek } } },
                 {
                   $group: {
@@ -1318,7 +1318,7 @@ export class AdminController {
                 }
               ],
               monthlyTripVolume: [
-                { $addFields: { resolvedDate: { $toDate: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] } } } },
+                { $addFields: { resolvedDate: { $convert: { input: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } } } },
                 { $match: { resolvedDate: { $gte: startOfMonth } } },
                 {
                   $group: {
