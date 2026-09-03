@@ -50,6 +50,7 @@ export interface ITrip extends Document {
   updatedAt: Date;
 
   // Passenger Information
+  passengerAvatarUrl?: string;
   fullName?: string;
   dateOfBirth?: string;
   confirmDob?: boolean;
@@ -188,6 +189,7 @@ const tripSchema = new Schema<ITrip>(
     cancellationReason: { type: String },
 
     // Passenger Information
+    passengerAvatarUrl: { type: String },
     fullName: { type: String },
     dateOfBirth: { type: String },
     confirmDob: { type: Boolean },

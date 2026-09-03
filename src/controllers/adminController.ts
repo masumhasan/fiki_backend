@@ -19,6 +19,7 @@ const updateDriverStatusSchema = z.object({
 
 const createTripSchema = z.object({
   // Passenger Information
+  passengerAvatarUrl: z.string().optional().or(z.null()),
   fullName: z.string().min(2, "Full name is required"),
   dateOfBirth: z.string().min(1, "Date of birth is required"),
   confirmDob: z.boolean().optional(),
@@ -780,6 +781,9 @@ export class AdminController {
       if (body.destinationAddress) {
         trip.dropoffLocation = { address: body.destinationAddress };
       }
+      if (body.passengerAvatarUrl !== undefined) {
+        trip.passengerAvatarUrl = body.passengerAvatarUrl;
+      }
 
       Object.assign(trip, body);
       await trip.save();
@@ -795,6 +799,7 @@ export class AdminController {
             driverNotes: trip.driverNotes,
             specialInstructions: trip.specialInstructions,
             mobilityOptions: trip.mobilityOptions,
+            passengerAvatarUrl: trip.passengerAvatarUrl,
             returnPickupTime: trip.returnPickupTime,
             returnPickupAddress: trip.returnPickupAddress,
             returnDestinationAddress: trip.returnDestinationAddress,

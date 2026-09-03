@@ -8,6 +8,7 @@ import { parseCentralDateTime } from "../utils/dateUtils.js";
 
 const createRideSchema = z.object({
   // Passenger Information
+  passengerAvatarUrl: z.string().optional().or(z.null()),
   fullName: z.string().min(2, "Full name is required"),
   dateOfBirth: z.string().min(1, "Date of birth is required"),
   confirmDob: z.boolean().optional(),
