@@ -1278,10 +1278,11 @@ export class AdminController {
                 }
               ],
               monthlyPerformance: [
-                { $match: { createdAt: { $gte: startOfYear } } },
+                { $addFields: { resolvedDate: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] } } },
+                { $match: { resolvedDate: { $gte: startOfYear } } },
                 {
                   $group: {
-                    _id: { $month: "$createdAt" },
+                    _id: { $month: "$resolvedDate" },
                     requested: { $sum: 1 },
                     completed: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] } }
                   }
@@ -1306,20 +1307,22 @@ export class AdminController {
                 }
               ],
               weeklyTripVolume: [
-                { $match: { createdAt: { $gte: startOfWeek } } },
+                { $addFields: { resolvedDate: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] } } },
+                { $match: { resolvedDate: { $gte: startOfWeek } } },
                 {
                   $group: {
-                    _id: { $dayOfWeek: "$createdAt" },
+                    _id: { $dayOfWeek: "$resolvedDate" },
                     total: { $sum: 1 },
                     completed: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] } }
                   }
                 }
               ],
               monthlyTripVolume: [
-                { $match: { createdAt: { $gte: startOfMonth } } },
+                { $addFields: { resolvedDate: { $ifNull: ["$pickupDate", { $ifNull: ["$startDate", "$createdAt"] }] } } },
+                { $match: { resolvedDate: { $gte: startOfMonth } } },
                 {
                   $group: {
-                    _id: { $ceil: { $divide: [{ $dayOfMonth: "$createdAt" }, 7] } },
+                    _id: { $ceil: { $divide: [{ $dayOfMonth: "$resolvedDate" }, 7] } },
                     total: { $sum: 1 },
                     completed: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] } }
                   }
