@@ -729,10 +729,10 @@ export class DriverController {
       }
 
       const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-      const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string, 10) || 1000));
+      const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit as string, 10) || 10)); // Default limit 10
       const skip = (page - 1) * limit;
 
-      const { status } = req.query;
+      const { status, tab } = req.query;
       const driverId = req.user.userId;
 
       // Exclude master parent container requests when child legs exist
@@ -746,31 +746,76 @@ export class DriverController {
         parentRequestId: { $in: masterRecurringIds },
       }).distinct("parentRequestId");
 
-      const filter: Record<string, unknown> = { driverId };
-
+      const baseFilter: Record<string, unknown> = { driverId };
       if (parentIdsWithChildren.length > 0) {
-        filter._id = { $nin: parentIdsWithChildren };
+        baseFilter._id = { $nin: parentIdsWithChildren };
       }
 
-      if (status) filter.status = status;
+      if (status) baseFilter.status = status;
 
-      const trips = await Trip.find(filter)
+      const todayStr = getCentralTodayStr();
+
+      // Build filters for each tab
+      const getTabFilter = (tabName: string) => {
+        const f = { ...baseFilter };
+        if (tabName === "completed") {
+          f.status = "COMPLETED";
+        } else if (tabName === "missed") {
+          f.$or = [
+            { status: "MISSED" },
+            { 
+              status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "MISSED", "CANCELLED"] },
+              $or: [
+                { pickupDate: { $lt: todayStr } },
+                { startDate: { $lt: todayStr } }
+              ]
+            }
+          ];
+        } else if (tabName === "today") {
+          f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
+          f.$or = [
+            { pickupDate: todayStr },
+            { startDate: todayStr }
+          ];
+        } else if (tabName === "upcoming") {
+          f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
+          f.$or = [
+            { pickupDate: { $gt: todayStr } },
+            { startDate: { $gt: todayStr } }
+          ];
+        }
+        return f;
+      };
+
+      // Get counts for all tabs concurrently
+      const [todayCount, upcomingCount, completedCount, missedCount] = await Promise.all([
+        Trip.countDocuments(getTabFilter("today")),
+        Trip.countDocuments(getTabFilter("upcoming")),
+        Trip.countDocuments(getTabFilter("completed")),
+        Trip.countDocuments(getTabFilter("missed"))
+      ]);
+
+      const activeFilter = tab ? getTabFilter(tab as string) : baseFilter;
+
+      const trips = await Trip.find(activeFilter)
         .populate("passengerId", "name email phone")
         .sort({ scheduledTime: 1, pickupDate: 1, startDate: 1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean();
 
-      const total = await Trip.countDocuments(filter);
-
-      const allDriverTrips = await Trip.find(filter).lean();
-      const todayTripsCount = countTodayTripsForDriver(allDriverTrips);
+      const total = await Trip.countDocuments(activeFilter);
 
       res.status(200).json({
         success: true,
         data: {
           trips,
-          todayTripsCount,
+          counts: {
+            today: todayCount,
+            upcoming: upcomingCount,
+            completed: completedCount,
+            missed: missedCount
+          },
           pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
         },
       });
