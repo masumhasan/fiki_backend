@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "seed": "tsx src/scripts/seed.ts",
+    "migrate-base64": "tsx scripts/migrate_base64_to_s3.ts",
     "lint": "tsc --noEmit"
   },
   "keywords": [
