@@ -550,7 +550,7 @@ export class AdminController {
       const { status, type, search } = req.query;
       const baseFilter: Record<string, unknown> = {};
 
-      let sortLogic: any = { isFuture: 1, pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 };
+      let sortLogic: any = { pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 };
 
       if (type === "requests" || type === "master") {
         baseFilter.parentRequestId = { $exists: false };
@@ -620,17 +620,6 @@ export class AdminController {
       const now = new Date();
       let trips = await Trip.aggregate([
         { $match: filter },
-        { 
-          $addFields: {
-            isFuture: {
-              $cond: {
-                if: { $gt: [ { $ifNull: ["$pickupDate", "$startDate"] }, now ] },
-                then: 1,
-                else: 0
-              }
-            }
-          }
-        },
         { $sort: sortLogic },
         { $skip: skip },
         { $limit: limit }
