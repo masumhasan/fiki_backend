@@ -1342,7 +1342,7 @@ export class AdminController {
           { $sort: { tripsCount: -1 } },
           { $limit: 10 }
         ]),
-        Trip.find()
+        Trip.find({ parentRequestId: { $exists: false } })
           .populate("passengerId", "name avatarUrl")
           .sort({ createdAt: -1 })
           .limit(10)
