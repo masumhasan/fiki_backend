@@ -175,6 +175,7 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
         authNumber: masterTrip.authNumber,
         privatePay: masterTrip.privatePay,
         requestSource: masterTrip.requestSource,
+        passengerAvatarUrl: masterTrip.passengerAvatarUrl,
       };
 
       // 1. Outbound Leg (if not already completed/active)
