@@ -550,7 +550,7 @@ export class AdminController {
       const { status, type, search } = req.query;
       const baseFilter: Record<string, unknown> = {};
 
-      let sortLogic: any = { pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 };
+      let sortLogic: any = { pickupDate: 1, startDate: 1, scheduledTime: 1, createdAt: 1 };
 
       if (type === "requests" || type === "master") {
         baseFilter.parentRequestId = { $exists: false };
