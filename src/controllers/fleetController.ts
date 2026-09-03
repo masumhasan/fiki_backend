@@ -43,10 +43,10 @@ export class FleetController {
         const vehicleNumber = s.vehicleInfo?.licensePlate || profile?.vehicle?.licensePlate || "FKT-1234";
 
         const startDateObj = new Date(s.startedAt);
-        const dateStr = startDateObj.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+        const dateStr = startDateObj.toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", year: "numeric" });
 
-        const startTimeStr = startDateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        const endTimeStr = s.endedAt ? new Date(s.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+        const startTimeStr = startDateObj.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit" });
+        const endTimeStr = s.endedAt ? new Date(s.endedAt).toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit" }) : "—";
         const shiftTimeText = s.status === "COMPLETED" ? `${startTimeStr} – ${endTimeStr}` : `Started at ${startTimeStr}`;
 
         return {
@@ -121,10 +121,10 @@ export class FleetController {
       const vehicleNumber = shift.vehicleInfo?.licensePlate || profile?.vehicle?.licensePlate || "FKT-1234";
 
       const startDateObj = new Date(shift.startedAt);
-      const dateStr = startDateObj.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+      const dateStr = startDateObj.toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "long", day: "numeric", year: "numeric" });
 
-      const startTimeStr = startDateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const endTimeStr = shift.endedAt ? new Date(shift.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+      const startTimeStr = startDateObj.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit" });
+      const endTimeStr = shift.endedAt ? new Date(shift.endedAt).toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit" }) : "—";
       const shiftTimeText = shift.status === "COMPLETED" ? `${startTimeStr} – ${endTimeStr}` : `Started at ${startTimeStr}`;
 
       res.status(200).json({
