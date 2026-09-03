@@ -547,26 +547,72 @@ export class AdminController {
       const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
       const skip = (page - 1) * limit;
 
-      const { status, type } = req.query;
-      const filter: Record<string, unknown> = {};
-      if (status) filter.status = status;
+      const { status, type, search } = req.query;
+      const baseFilter: Record<string, unknown> = {};
 
       let sortLogic: any = { isFuture: 1, pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 };
 
       if (type === "requests" || type === "master") {
-        // Return ONLY master Ride Request container documents
-        filter.parentRequestId = { $exists: false };
+        baseFilter.parentRequestId = { $exists: false };
       } else if (type === "trips" || type === "child") {
-        // Return ONLY executable child legs or single trips
         const masterRecurringIds = await Trip.find({ schedule: "recurring", parentRequestId: { $exists: false } }).distinct("_id");
         const parentIdsWithChildren = await Trip.find({ parentRequestId: { $in: masterRecurringIds } }).distinct("parentRequestId");
         if (parentIdsWithChildren.length > 0) {
-          filter._id = { $nin: parentIdsWithChildren };
+          baseFilter._id = { $nin: parentIdsWithChildren };
         }
       } else if (type === "live") {
-        filter.status = { $in: ["IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING", "ACCEPTED", "SCHEDULED", "REQUESTED"] };
-        // For live dispatch board, we want the closest upcoming trips first
+        baseFilter.status = { $in: ["IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING", "ACCEPTED", "SCHEDULED", "REQUESTED"] };
         sortLogic = { pickupDate: 1, startDate: 1, scheduledTime: 1, createdAt: 1 };
+      }
+
+      // Generate summary based on base filter
+      const summaryPipeline = [
+        { $match: baseFilter },
+        { $group: { _id: "$status", count: { $sum: 1 } } }
+      ];
+      const summaryData = await Trip.aggregate(summaryPipeline);
+      
+      let onboardNow = 0;
+      let needDriver = 0;
+      let completedCount = 0;
+      let totalSummaryTrips = 0;
+      
+      summaryData.forEach(item => {
+        totalSummaryTrips += item.count;
+        if (item._id === "IN_PROGRESS") onboardNow += item.count;
+        else if (item._id === "REQUESTED") needDriver += item.count;
+        else if (item._id === "COMPLETED") completedCount += item.count;
+      });
+
+      const filter: Record<string, unknown> = { ...baseFilter };
+      if (status) {
+        const statusStr = status as string;
+        if (statusStr.includes(",")) {
+          filter.status = { $in: statusStr.split(",") };
+        } else {
+          filter.status = statusStr;
+        }
+      }
+
+      if (search) {
+        const searchStr = search as string;
+        const searchRegex = { $regex: searchStr, $options: "i" };
+        
+        const userMatches = await mongoose.model("User").find({ name: searchRegex }).distinct("_id");
+        
+        filter.$or = [
+          { fullName: searchRegex },
+          { "pickupLocation.address": searchRegex },
+          { "dropoffLocation.address": searchRegex },
+          { streetAddress: searchRegex },
+          { destinationAddress: searchRegex },
+          { $expr: { $regexMatch: { input: { $toString: "$_id" }, regex: searchStr, options: "i" } } }
+        ];
+
+        if (userMatches.length > 0) {
+          filter.$or.push({ passengerId: { $in: userMatches } });
+          filter.$or.push({ driverId: { $in: userMatches } });
+        }
       }
 
       const now = new Date();
@@ -599,6 +645,12 @@ export class AdminController {
         success: true,
         data: {
           trips,
+          summary: {
+            totalTrips: totalSummaryTrips,
+            onboardNow,
+            needDriver,
+            completedCount,
+          },
           pagination: {
             page,
             limit,
