@@ -15,4 +15,9 @@ router.post("/image", authenticate, upload.single("image"), (req, res, next) =>
   uploadController.uploadImage(req, res, next)
 );
 
+// Public upload image route (for landing page / unauthenticated forms)
+router.post("/public-image", upload.single("image"), (req, res, next) =>
+  uploadController.uploadImage(req, res, next)
+);
+
 export default router;
