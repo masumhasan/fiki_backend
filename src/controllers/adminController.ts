@@ -1421,6 +1421,7 @@ export class AdminController {
         const priceVal = t.fare || t.quotedFare || 0;
         const priceStr = `$${priceVal.toFixed(2)}`;
         const color = colors[idx % colors.length];
+        const avatarUrl = t.passengerAvatarUrl || (t.passengerId as any)?.avatarUrl || "";
 
         return [
           initials,
@@ -1429,7 +1430,8 @@ export class AdminController {
           statusStr,
           priceStr,
           color,
-          rideId
+          rideId,
+          avatarUrl
         ];
       });
 
