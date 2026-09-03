@@ -551,6 +551,8 @@ export class AdminController {
       const filter: Record<string, unknown> = {};
       if (status) filter.status = status;
 
+      let sortLogic: any = { isFuture: 1, pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 };
+
       if (type === "requests" || type === "master") {
         // Return ONLY master Ride Request container documents
         filter.parentRequestId = { $exists: false };
@@ -561,6 +563,10 @@ export class AdminController {
         if (parentIdsWithChildren.length > 0) {
           filter._id = { $nin: parentIdsWithChildren };
         }
+      } else if (type === "live") {
+        filter.status = { $in: ["IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING", "ACCEPTED", "SCHEDULED", "REQUESTED"] };
+        // For live dispatch board, we want the closest upcoming trips first
+        sortLogic = { pickupDate: 1, startDate: 1, scheduledTime: 1, createdAt: 1 };
       }
 
       const now = new Date();
@@ -577,7 +583,7 @@ export class AdminController {
             }
           }
         },
-        { $sort: { isFuture: 1, pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 } },
+        { $sort: sortLogic },
         { $skip: skip },
         { $limit: limit }
       ]);
@@ -1291,7 +1297,7 @@ export class AdminController {
           { $limit: 10 }
         ]),
         Trip.find()
-          .populate("passengerId", "name")
+          .populate("passengerId", "name avatarUrl")
           .sort({ createdAt: -1 })
           .limit(10)
           .lean()
