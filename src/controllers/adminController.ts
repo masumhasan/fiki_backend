@@ -791,7 +791,7 @@ export class AdminController {
       if (trip.parentRequestId) {
         // Single child trip updated
       } else {
-        // Master request updated: sync child trips
+        // Master request updated: sync child trips for operational fields only if they haven't started
         await Trip.updateMany(
           { parentRequestId: trip._id, status: { $in: ["REQUESTED", "QUOTE_SENT", "QUOTE_COUNTERED", "QUOTE_ACCEPTED", "ACCEPTED"] } },
           {
@@ -799,12 +799,19 @@ export class AdminController {
             driverNotes: trip.driverNotes,
             specialInstructions: trip.specialInstructions,
             mobilityOptions: trip.mobilityOptions,
-            passengerAvatarUrl: trip.passengerAvatarUrl,
             returnPickupTime: trip.returnPickupTime,
             returnPickupAddress: trip.returnPickupAddress,
             returnDestinationAddress: trip.returnDestinationAddress,
           }
         );
+        
+        // Always sync passenger identity info to ALL child trips regardless of status
+        if (body.passengerAvatarUrl !== undefined) {
+          await Trip.updateMany(
+            { parentRequestId: trip._id },
+            { passengerAvatarUrl: trip.passengerAvatarUrl }
+          );
+        }
         await generateRecurringTripsForMaster(trip);
       }
 
