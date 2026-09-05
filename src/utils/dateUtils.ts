@@ -24,6 +24,16 @@ export function getCentralTodayStr(date: Date = new Date()): string {
 }
 
 /**
+ * Get tomorrow's wall-clock date in America/Chicago timezone formatted as YYYY-MM-DD.
+ */
+export function getCentralTomorrowStr(date: Date = new Date()): string {
+  const todayStr = getCentralTodayStr(date);
+  const [y, m, d] = todayStr.split("-").map(Number);
+  const tomorrowDate = new Date(Date.UTC(y, m - 1, d + 1, 12, 0, 0));
+  return getCentralTodayStr(tomorrowDate);
+}
+
+/**
  * Get day-of-week abbreviation in America/Chicago timezone ("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").
  */
 export function getCentralDayAbbr(date: Date = new Date()): string {

@@ -11,6 +11,7 @@ import {
   getCentralDayBounds,
   getCentralDayFull,
   getCentralTodayStr,
+  getCentralTomorrowStr,
   parseCentralDateTime,
   calculateShiftDuration,
 } from "../utils/dateUtils.js";
@@ -755,6 +756,7 @@ export class DriverController {
       if (status) baseFilter.status = status;
 
       const todayStr = getCentralTodayStr();
+      const tomorrowStr = getCentralTomorrowStr();
 
       // Build filters for each tab
       const getTabFilter = (tabName: string) => {
@@ -768,7 +770,12 @@ export class DriverController {
               status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "MISSED", "CANCELLED"] },
               $or: [
                 { pickupDate: { $lt: todayStr } },
-                { startDate: { $lt: todayStr } }
+                {
+                  $and: [
+                    { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                    { startDate: { $lt: todayStr } }
+                  ]
+                }
               ]
             }
           ];
@@ -776,13 +783,23 @@ export class DriverController {
           f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
           f.$or = [
             { pickupDate: todayStr },
-            { startDate: todayStr }
+            {
+              $and: [
+                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                { startDate: todayStr }
+              ]
+            }
           ];
-        } else if (tabName === "upcoming") {
+        } else if (tabName === "upcoming" || tabName === "nextDay") {
           f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
           f.$or = [
-            { pickupDate: { $gt: todayStr } },
-            { startDate: { $gt: todayStr } }
+            { pickupDate: tomorrowStr },
+            {
+              $and: [
+                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                { startDate: tomorrowStr }
+              ]
+            }
           ];
         }
         return f;
@@ -807,6 +824,10 @@ export class DriverController {
 
       const total = await Trip.countDocuments(activeFilter);
 
+      res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.set("Pragma", "no-cache");
+      res.set("Expires", "0");
+
       res.status(200).json({
         success: true,
         data: {
@@ -814,6 +835,7 @@ export class DriverController {
           counts: {
             today: todayCount,
             upcoming: upcomingCount,
+            nextDay: upcomingCount,
             completed: completedCount,
             missed: missedCount
           },
