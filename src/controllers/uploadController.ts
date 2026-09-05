@@ -6,13 +6,18 @@ export class UploadController {
     try {
       const category = (req.body.category || req.query.category || "shift-odometers") as string;
 
+      const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+      const host = req.get("host");
+      const customBaseUrl = host ? `${proto}://${host}` : undefined;
+
       // 1. Check if multipart file uploaded via multer
       if (req.file) {
         const url = await uploadImageToS3(
           req.file.buffer,
           req.file.originalname || "photo.jpg",
           req.file.mimetype || "image/jpeg",
-          category
+          category,
+          customBaseUrl
         );
         res.status(200).json({
           success: true,
@@ -26,7 +31,7 @@ export class UploadController {
       if (imageBase64) {
         const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
         const buffer = Buffer.from(cleanBase64, "base64");
-        const url = await uploadImageToS3(buffer, fileName, mimeType, category);
+        const url = await uploadImageToS3(buffer, fileName, mimeType, category, customBaseUrl);
         res.status(200).json({
           success: true,
           data: { url },

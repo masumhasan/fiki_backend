@@ -13,10 +13,30 @@ import tripRoutes from "./routes/tripRoutes.js";
 import settingsRoutes from "./routes/settingsRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 
+import path from "path";
+
 const app: Express = express();
 
+// Trust proxy for correct protocol and host resolution behind reverse proxy
+app.set("trust proxy", 1);
+
 // Security Headers
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
+// Serve static uploaded files
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"), {
+    setHeaders: (res) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    },
+  })
+);
 
 // Request ID Tracing
 app.use(requestIdMiddleware);
