@@ -103,3 +103,43 @@ export function parseCentralDateTime(timeStr: string, dateStr?: string, now: Dat
   const utcMs = Date.UTC(year, month - 1, day, hours + offsetHours, minutes, 0, 0);
   return new Date(utcMs);
 }
+
+/**
+ * Parse time string (e.g. "08:00 AM", "8:00 AM", "12:00 AM", "6:30 AM", "9:00 PM") into minutes from start of day (0..1439).
+ */
+export function parseTimeToMinutes(timeStr: string): number {
+  if (!timeStr) return 0;
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!match) return 0;
+  let h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const ampm = match[3] ? match[3].toUpperCase() : null;
+  if (ampm === "PM" && h !== 12) h += 12;
+  if (ampm === "AM" && h === 12) h = 0;
+  return h * 60 + m;
+}
+
+/**
+ * Calculate shift duration in minutes and format as string "Xh YYm".
+ * Handles overnight shifts (e.g., 9:00 PM to 5:00 AM).
+ */
+export function calculateShiftDuration(startTime: string, endTime: string): {
+  minutes: number;
+  hours: number;
+  text: string;
+} {
+  const startMins = parseTimeToMinutes(startTime);
+  let endMins = parseTimeToMinutes(endTime);
+  if (endMins < startMins) {
+    endMins += 24 * 60;
+  }
+  const diff = endMins - startMins;
+  const hrs = Math.floor(diff / 60);
+  const mins = diff % 60;
+  return {
+    minutes: diff,
+    hours: hrs + mins / 60,
+    text: `${hrs}h ${String(mins).padStart(2, "0")}m`,
+  };
+}
+

@@ -10,7 +10,7 @@ import { Setting } from "../models/Setting.js";
 import bcrypt from "bcryptjs";
 import { getFortnightlyPeriods } from "./driverController.js";
 import { generateRecurringTripsForMaster } from "../utils/recurringTripUtils.js";
-import { parseCentralDateTime } from "../utils/dateUtils.js";
+import { parseCentralDateTime, calculateShiftDuration, getCentralTodayStr } from "../utils/dateUtils.js";
 
 const updateDriverStatusSchema = z.object({
   approvalStatus: z.enum(["APPROVED", "REJECTED"]).optional(),
@@ -2154,6 +2154,14 @@ export class AdminController {
       const endMonth = monthShortNames[endOfWeek.getMonth()];
       const weekRangeLabel = `${startMonth} ${startOfWeek.getDate()} – ${endMonth} ${endOfWeek.getDate()}, ${endOfWeek.getFullYear()}`;
 
+      // Helper to format date as YYYY-MM-DD using local year, month, date
+      const toDateStr = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      };
+
       // Build 7 days headers array
       const weekDays: Array<{ day: string; date: string; dateStr: string; dayOfWeek: number }> = [];
       for (let i = 0; i < 7; i++) {
@@ -2162,7 +2170,7 @@ export class AdminController {
         weekDays.push({
           day: dayHeaderNames[i],
           date: `${monthShortNames[d.getMonth()]} ${d.getDate()}`,
-          dateStr: d.toISOString().split("T")[0],
+          dateStr: toDateStr(d),
           dayOfWeek: d.getDay(),
         });
       }
@@ -2173,9 +2181,13 @@ export class AdminController {
       const users = await User.find({ _id: { $in: userIds } }).select("name email phone avatarUrl").lean();
       const userMap = new Map(users.map((u: any) => [u._id.toString(), u]));
 
+      const weekDateStrs = weekDays.map((w) => w.dateStr);
       const weekShifts = await DriverShift.find({
         driverId: { $in: userIds },
-        createdAt: { $gte: startOfWeek, $lte: endOfWeek }
+        $or: [
+          { shiftDate: { $in: weekDateStrs } },
+          { createdAt: { $gte: startOfWeek, $lte: endOfWeek } }
+        ]
       }).lean();
 
       // Helper map for shifts: key = `${driverId}_${shiftDate}`
@@ -2196,7 +2208,7 @@ export class AdminController {
       let offTodayCount = 0;
       let scheduleIssuesCount = 0;
 
-      const todayStr = todayStart.toISOString().split("T")[0];
+      const todayStr = toDateStr(todayStart);
 
       const drivers = profiles.map((p: any, pIdx: number) => {
         const uidStr = p.userId.toString();
@@ -2213,9 +2225,22 @@ export class AdminController {
         const shifts = weekDays.map((wd) => {
           const dayKey = dayAbbrKeys[wd.dayOfWeek];
           const cfg = configMap.get(dayKey) as any;
-          const isWorking = cfg ? cfg.working !== false : (wd.dayOfWeek >= 1 && wd.dayOfWeek <= 5);
-          const startTimeStr = cfg?.startTime || "08:00 AM";
-          const endTimeStr = cfg?.endTime || "04:00 PM";
+          let isWorking = cfg ? cfg.working !== false : (wd.dayOfWeek >= 1 && wd.dayOfWeek <= 5);
+          let startTimeStr = cfg?.startTime || "08:00 AM";
+          let endTimeStr = cfg?.endTime || "04:00 PM";
+
+          // Check if driver has a one-time change for this date
+          const oneTimeChanges: any[] = p.oneTimeChanges || [];
+          for (const ch of oneTimeChanges) {
+            if (!ch?.date) continue;
+            const chDate = getCentralTodayStr(new Date(ch.date));
+            if (chDate === wd.dateStr) {
+              isWorking = ch.working === true;
+              if (ch.startTime) startTimeStr = ch.startTime;
+              if (ch.endTime) endTimeStr = ch.endTime;
+              break;
+            }
+          }
 
           const shiftKey = `${uidStr}_${wd.dateStr}`;
           const actualShift = shiftMap.get(shiftKey);
@@ -2224,9 +2249,7 @@ export class AdminController {
           let label = "Scheduled";
           let toneClass = "bg-amber-100 border-amber-300 text-amber-800"; // Scheduled: --color-amber-100
           let hoursText = `${startTimeStr} – ${endTimeStr}`;
-          let workDuration = "8h 00m";
-
-          const dayDate = new Date(wd.dateStr);
+          let workDuration = "—";
 
           // Parse scheduled start time Date for comparison using central time
           const scheduledStartDate = parseCentralDateTime(startTimeStr, wd.dateStr);
@@ -2238,7 +2261,9 @@ export class AdminController {
             hoursText = "Day off";
             workDuration = "—";
           } else {
-            totalWeekMinutes += 8 * 60; // 8 hours scheduled
+            const duration = calculateShiftDuration(startTimeStr, endTimeStr);
+            totalWeekMinutes += duration.minutes;
+            workDuration = duration.text;
 
             if (actualShift && actualShift.startedAt) {
               const startedDate = new Date(actualShift.startedAt);
@@ -2290,6 +2315,7 @@ export class AdminController {
         });
 
         const totalHours = Math.floor(totalWeekMinutes / 60);
+        const totalRemainingMins = totalWeekMinutes % 60;
 
         return {
           id: p._id.toString(),
@@ -2299,7 +2325,7 @@ export class AdminController {
           phone: u?.phone || "",
           initials,
           tone,
-          total: `${totalHours}h 00m`,
+          total: `${totalHours}h ${String(totalRemainingMins).padStart(2, "0")}m`,
           avatarUrl,
           shifts,
           weeklySchedule: weeklyScheduleConfig,
@@ -2309,8 +2335,8 @@ export class AdminController {
       res.status(200).json({
         success: true,
         data: {
-          weekStartStr: startOfWeek.toISOString().split("T")[0],
-          weekEndStr: endOfWeek.toISOString().split("T")[0],
+          weekStartStr: toDateStr(startOfWeek),
+          weekEndStr: toDateStr(endOfWeek),
           weekRangeLabel,
           weekDays,
           metrics: {
