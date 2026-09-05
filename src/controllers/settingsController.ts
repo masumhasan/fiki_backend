@@ -15,4 +15,23 @@ export const settingsController = {
       next(error);
     }
   },
+
+  async getCrmContent(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      let setting = await Setting.findOne({ key: "crmContent" });
+      if (!setting) {
+        // Return a default if not set
+        const defaultContent = {
+          privacyPolicy: { passengers: "", drivers: "", general: "" },
+          termsOfService: { passengers: "", drivers: "", general: "" },
+          helpCenter: { passengers: "", drivers: "", general: "" },
+        };
+        res.status(200).json({ success: true, data: defaultContent });
+        return;
+      }
+      res.status(200).json({ success: true, data: JSON.parse(setting.value) });
+    } catch (error) {
+      next(error);
+    }
+  },
 };

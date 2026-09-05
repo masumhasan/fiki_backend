@@ -2129,6 +2129,29 @@ export class AdminController {
     }
   }
 
+  async updateCrmContent(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { crmContent } = req.body;
+      if (!crmContent) {
+        res.status(422).json({ success: false, error: { code: "VALIDATION_FAILED", message: "crmContent is required" } });
+        return;
+      }
+
+      const setting = await Setting.findOneAndUpdate(
+        { key: "crmContent" },
+        { value: JSON.stringify(crmContent) },
+        { new: true, upsert: true }
+      );
+
+      res.status(200).json({
+        success: true,
+        data: JSON.parse(setting.value),
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getScheduleOverview(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const now = new Date();

@@ -37,7 +37,9 @@ router.get("/analytics", (req, res, next) => adminController.getAnalytics(req, r
 router.get("/earnings", (req, res, next) => adminController.getDriverEarningsList(req, res, next));
 router.patch("/earnings/:driverId", (req, res, next) => adminController.updateDriverEarnings(req, res, next));
 router.get("/schedule-overview", (req, res, next) => adminController.getScheduleOverview(req, res, next));
+// System Settings
 router.put("/settings/dispatch-number", (req, res, next) => adminController.updateDispatchNumber(req, res, next));
+router.put("/settings/crm-content", (req, res, next) => adminController.updateCrmContent(req, res, next));
 
 router.get("/vehicle-reports", (req, res, next) => fleetController.getVehicleReports(req, res, next));
 router.get("/vehicle-reports/:id", (req, res, next) => fleetController.getShiftReportById(req, res, next));
