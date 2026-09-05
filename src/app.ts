@@ -65,8 +65,8 @@ app.use(
 );
 
 // Body Parser
-app.use(express.json({ limit: "20mb" }));
-app.use(express.urlencoded({ limit: "20mb", extended: true }));
+app.use(express.json({ limit: "500mb" }));
+app.use(express.urlencoded({ limit: "500mb", extended: true }));
 
 // Health Check Routes
 app.use("/", healthRoutes);
