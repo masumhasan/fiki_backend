@@ -12,6 +12,7 @@ import {
   getCentralDayFull,
   getCentralTodayStr,
   parseCentralDateTime,
+  calculateShiftDuration,
 } from "../utils/dateUtils.js";
 
 
@@ -1291,14 +1292,33 @@ export class DriverController {
       // Check & auto end shift if scheduled end time passed
       await checkAndAutoEndActiveShift(driverId, driverProfile, now);
 
+      const toDateStr = (d: Date) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      };
+
       const todayStr = getCentralTodayStr(now);
       const { start: todayStart, end: todayEnd } = getCentralDayBounds(todayStr, now);
 
-      // Start of current week (Monday)
+      // Start of current week (Monday) aligned with local date
+      const localTodayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const currentDayOfWeek = now.getDay();
       const distanceToMon = (currentDayOfWeek + 6) % 7;
-      const startOfWeek = new Date(todayStart);
+      const startOfWeek = new Date(localTodayStart);
       startOfWeek.setDate(startOfWeek.getDate() - distanceToMon);
+
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(endOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+
+      const weekDateStrs: string[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startOfWeek);
+        d.setDate(d.getDate() + i);
+        weekDateStrs.push(toDateStr(d));
+      }
 
       // Fetch today's trips, shift, week shifts, and pending end report shift concurrently
       const [todayTrips, todayShift, weekShifts, pendingEndReportShift] = await Promise.all([
@@ -1320,7 +1340,10 @@ export class DriverController {
 
         DriverShift.find({
           driverId,
-          createdAt: { $gte: startOfWeek }
+          $or: [
+            { shiftDate: { $in: weekDateStrs } },
+            { createdAt: { $gte: startOfWeek, $lte: endOfWeek } }
+          ]
         }).lean(),
 
         DriverShift.findOne({
@@ -1334,7 +1357,21 @@ export class DriverController {
       const scheduleMapByDay = new Map(weeklyScheduleConfig.map((s: any) => [s.day, s]));
       const dayAbbrKeys = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-      const getScheduleConfigForDate = (dateObj: Date) => {
+      const getScheduleConfigForDate = (dateObj: Date, dateStr: string) => {
+        // Check one-time changes first
+        const oneTimeChanges: any[] = driverProfile?.oneTimeChanges || [];
+        for (const ch of oneTimeChanges) {
+          if (!ch?.date) continue;
+          const chDate = getCentralTodayStr(new Date(ch.date));
+          if (chDate === dateStr) {
+            const isWorking = ch.working === true;
+            const startTime = ch.startTime || "08:00 AM";
+            const endTime = ch.endTime || "04:00 PM";
+            const hoursText = isWorking ? `${startTime} – ${endTime}` : "Day Off";
+            return { isWorking, startTime, endTime, hoursText, isOneTimeOverride: true };
+          }
+        }
+
         const key = dayAbbrKeys[dateObj.getDay()];
         const cfg = scheduleMapByDay.get(key) as any;
         if (cfg) {
@@ -1342,16 +1379,16 @@ export class DriverController {
           const startTime = cfg.startTime || "08:00 AM";
           const endTime = cfg.endTime || "04:00 PM";
           const hoursText = isWorking ? `${startTime} – ${endTime}` : "Day Off";
-          return { isWorking, startTime, endTime, hoursText };
+          return { isWorking, startTime, endTime, hoursText, isOneTimeOverride: false };
         }
-        return { isWorking: true, startTime: "08:00 AM", endTime: "04:00 PM", hoursText: "08:00 AM – 04:00 PM" };
+        return { isWorking: true, startTime: "08:00 AM", endTime: "04:00 PM", hoursText: "08:00 AM – 04:00 PM", isOneTimeOverride: false };
       };
 
-      const todayConfig = getScheduleConfigForDate(now);
+      const todayConfig = getScheduleConfigForDate(now, todayStr);
       const todaySchedule = {
         startTime: todayConfig.startTime,
         endTime: todayConfig.endTime,
-        hours: todayConfig.isWorking ? "8 hours" : "Day Off",
+        hours: todayConfig.isWorking ? calculateShiftDuration(todayConfig.startTime, todayConfig.endTime).text : "Day Off",
       };
 
       // 1. Today's Trip Summary
@@ -1371,9 +1408,10 @@ export class DriverController {
       const dayAbbrs = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
       const upcomingSchedule = [];
       for (let i = 1; i <= 5; i++) {
-        const d = new Date(todayStart);
+        const d = new Date(localTodayStart);
         d.setDate(d.getDate() + i);
-        const dayCfg = getScheduleConfigForDate(d);
+        const dStr = toDateStr(d);
+        const dayCfg = getScheduleConfigForDate(d, dStr);
         upcomingSchedule.push({
           day: dayAbbrs[d.getDay()],
           date: String(d.getDate()),
@@ -1383,35 +1421,44 @@ export class DriverController {
       }
 
       // 3. Weekly Schedule (7 Days of Current Week: Mon - Sun)
-      const fullDayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const fullDayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
       const monthShortNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       
-      const shiftMap = new Map(weekShifts.map((s: any) => [s.shiftDate, s]));
+      const shiftMap = new Map();
+      weekShifts.forEach((s: any) => {
+        if (s.shiftDate) {
+          shiftMap.set(s.shiftDate, s);
+        } else if (s.createdAt) {
+          shiftMap.set(toDateStr(new Date(s.createdAt)), s);
+        }
+      });
 
       const weeklySchedule = [];
       for (let i = 0; i < 7; i++) {
         const d = new Date(startOfWeek);
         d.setDate(d.getDate() + i);
-        const dateStr = d.toISOString().split("T")[0];
-        const dayName = fullDayNames[d.getDay()];
+        const dateStr = toDateStr(d);
+        const dayName = fullDayNames[i];
         const formattedDate = `${monthShortNames[d.getMonth()]} ${d.getDate()}`;
-        const dayCfg = getScheduleConfigForDate(d);
+        const dayCfg = getScheduleConfigForDate(d, dateStr);
 
         const s = shiftMap.get(dateStr) as any;
 
-        let shiftHours = dayCfg.hoursText;
-        let totalHours = dayCfg.isWorking ? "8h" : "—";
-        let attendance = dayCfg.isWorking ? "Pending" : "Off";
-        let approval = "Pending";
+        // Shift Schedules: driver's actual schedule from admin portal / one-time changes
+        const shiftSchedule = dayCfg.hoursText;
+
+        // Shift Logs: actual clock-in / clock-out times
+        let shiftLogs = "—";
+        let totalHours = "—";
 
         if (s) {
           if (s.startedAt && s.endedAt) {
             const startT = new Date(s.startedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "America/Chicago" });
             const endT = new Date(s.endedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "America/Chicago" });
-            shiftHours = `${startT} – ${endT}`;
+            shiftLogs = `${startT} – ${endT}`;
           } else if (s.startedAt) {
             const startT = new Date(s.startedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "America/Chicago" });
-            shiftHours = `${startT} – In Progress`;
+            shiftLogs = `${startT} – In Progress`;
           }
 
           if (s.totalHoursText) {
@@ -1421,56 +1468,42 @@ export class DriverController {
             const mins = Math.max(1, Math.round(diffMs / 60000));
             totalHours = `${Math.floor(mins / 60)}h ${mins % 60}m`;
           }
+        }
 
-          if (s.status === "COMPLETED" || s.status === "IN_PROGRESS") {
-            approval = "Approved";
-            if (s.status === "IN_PROGRESS") {
-              attendance = "In Progress";
-              approval = "Pending";
-            } else {
-              // Calculate Present vs Late based on 15 min grace period
-              const schedForDay = resolveScheduleForDate(driverProfile, dateStr, now);
-              if (schedForDay && schedForDay.scheduledStartMs && s.startedAt) {
-                const startedMs = new Date(s.startedAt).getTime();
-                const graceMs = 15 * 60 * 1000;
-                if (startedMs <= schedForDay.scheduledStartMs + graceMs) {
-                  attendance = "Present";
-                } else {
-                  attendance = "Late";
-                }
-              } else {
-                attendance = "Present";
-              }
-            }
+        // Attendance status matching Admin Portal Weekly Schedule Overview:
+        // Day Off | Scheduled | Present | Late | Absent
+        let attendance = "Scheduled";
+        const scheduledStartDate = parseCentralDateTime(dayCfg.startTime, dateStr);
+
+        if (!dayCfg.isWorking) {
+          attendance = "Day Off";
+        } else if (s && s.startedAt) {
+          const startedDate = new Date(s.startedAt);
+          const isLate = startedDate.getTime() > scheduledStartDate.getTime() + 15 * 60 * 1000;
+          if (isLate) {
+            attendance = "Late";
+          } else {
+            attendance = "Present";
           }
         } else {
-          const schedForDay = resolveScheduleForDate(driverProfile, dateStr, now);
-          if (!dayCfg.isWorking) {
-            attendance = "Off";
-            approval = "Approved";
-            totalHours = "—";
-          } else if (schedForDay && schedForDay.scheduledStartMs && now.getTime() > schedForDay.scheduledStartMs) {
+          // No shift started yet
+          if (now.getTime() > scheduledStartDate.getTime()) {
             attendance = "Absent";
-            approval = "Approved";
-            totalHours = "—";
-          } else if (dateStr === todayStr) {
-            attendance = "Pending";
-            approval = "Pending";
-            totalHours = "8h";
           } else {
             attendance = "Scheduled";
-            approval = "Pending";
-            totalHours = "8h";
           }
         }
 
         weeklySchedule.push({
           day: dayName,
           date: formattedDate,
-          shiftHours,
+          dateStr,
+          shiftSchedule,
+          shiftLogs,
+          shiftHours: shiftLogs, // alias for backwards compatibility
           total: totalHours,
           attendance,
-          approval,
+          approval: "Approved", // kept for backwards compatibility if needed
         });
       }
 
