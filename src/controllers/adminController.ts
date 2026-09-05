@@ -855,10 +855,20 @@ export class AdminController {
         );
         
         // Always sync passenger identity info to ALL child trips regardless of status
-        if (body.passengerAvatarUrl !== undefined) {
+        const passengerFieldsToSync: any = {};
+        if (body.passengerAvatarUrl !== undefined) passengerFieldsToSync.passengerAvatarUrl = trip.passengerAvatarUrl;
+        if (body.fullName !== undefined) passengerFieldsToSync.fullName = trip.fullName;
+        if (body.dateOfBirth !== undefined) passengerFieldsToSync.dateOfBirth = trip.dateOfBirth;
+        if (body.phoneNumber !== undefined) passengerFieldsToSync.phoneNumber = trip.phoneNumber;
+        if (body.email !== undefined) passengerFieldsToSync.email = trip.email;
+        if (body.emergencyContactName !== undefined) passengerFieldsToSync.emergencyContactName = trip.emergencyContactName;
+        if (body.emergencyContactPhone !== undefined) passengerFieldsToSync.emergencyContactPhone = trip.emergencyContactPhone;
+        if (body.relationship !== undefined) passengerFieldsToSync.relationship = trip.relationship;
+
+        if (Object.keys(passengerFieldsToSync).length > 0) {
           await Trip.updateMany(
             { parentRequestId: trip._id },
-            { passengerAvatarUrl: trip.passengerAvatarUrl }
+            { $set: passengerFieldsToSync }
           );
         }
         await generateRecurringTripsForMaster(trip);
