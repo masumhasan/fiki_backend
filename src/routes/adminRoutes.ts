@@ -56,4 +56,8 @@ router.post("/vehicles", (req, res, next) => vehicleController.createVehicle(req
 router.put("/vehicles/:id", (req, res, next) => vehicleController.updateVehicle(req, res, next));
 router.delete("/vehicles/:id", (req, res, next) => vehicleController.deleteVehicle(req, res, next));
 
+router.get("/users", (req, res, next) => adminController.getUsers(req, res, next));
+router.put("/users/:id", (req, res, next) => adminController.updateUser(req, res, next));
+router.delete("/users/:id", (req, res, next) => adminController.deleteUser(req, res, next));
+
 export default router;
