@@ -139,4 +139,8 @@ const driverShiftSchema = new Schema<IDriverShift>(
   }
 );
 
+driverShiftSchema.index({ driverId: 1, status: 1 });
+driverShiftSchema.index({ driverId: 1, shiftDate: 1, createdAt: -1 });
+driverShiftSchema.index({ driverId: 1, pendingEndReport: 1 });
+
 export const DriverShift = mongoose.model<IDriverShift>("DriverShift", driverShiftSchema);

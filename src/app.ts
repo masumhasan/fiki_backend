@@ -1,3 +1,4 @@
+import compression from "compression";
 import cors from "cors";
 import express, { Express } from "express";
 import helmet from "helmet";
@@ -16,6 +17,9 @@ import uploadRoutes from "./routes/uploadRoutes.js";
 import path from "path";
 
 const app: Express = express();
+
+// Enable HTTP response compression (gzip/deflate)
+app.use(compression());
 
 // Trust proxy for correct protocol and host resolution behind reverse proxy
 app.set("trust proxy", 1);

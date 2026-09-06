@@ -744,9 +744,12 @@ export class DriverController {
         parentRequestId: { $exists: false },
       }).distinct("_id");
 
-      const parentIdsWithChildren = await Trip.find({
-        parentRequestId: { $in: masterRecurringIds },
-      }).distinct("parentRequestId");
+      let parentIdsWithChildren: any[] = [];
+      if (masterRecurringIds.length > 0) {
+        parentIdsWithChildren = await Trip.find({
+          parentRequestId: { $in: masterRecurringIds },
+        }).distinct("parentRequestId");
+      }
 
       const baseFilter: Record<string, unknown> = { driverId };
       if (parentIdsWithChildren.length > 0) {
@@ -770,37 +773,18 @@ export class DriverController {
               status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "MISSED", "CANCELLED"] },
               $or: [
                 { pickupDate: { $lt: todayStr } },
-                {
-                  $and: [
-                    { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
-                    { startDate: { $lt: todayStr } }
-                  ]
-                }
+                { startDate: { $lt: todayStr } }
               ]
             }
           ];
         } else if (tabName === "today") {
           f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
-          f.$or = [
-            { pickupDate: todayStr },
-            {
-              $and: [
-                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
-                { startDate: todayStr }
-              ]
-            }
-          ];
+          f.$or = [{ pickupDate: todayStr }, { startDate: todayStr }];
         } else if (tabName === "upcoming" || tabName === "nextDay") {
           f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
-          f.$or = [
-            { pickupDate: tomorrowStr },
-            {
-              $and: [
-                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
-                { startDate: tomorrowStr }
-              ]
-            }
-          ];
+          f.$or = [{ pickupDate: tomorrowStr }, { startDate: tomorrowStr }];
+        } else if (tabName === "all") {
+          // returns baseFilter
         }
         return f;
       };
@@ -813,9 +797,11 @@ export class DriverController {
         Trip.countDocuments(getTabFilter("missed"))
       ]);
 
-      const activeFilter = tab ? getTabFilter(tab as string) : baseFilter;
+      const activeTab = tab ? (tab as string) : "today";
+      const activeFilter = getTabFilter(activeTab);
 
       const trips = await Trip.find(activeFilter)
+        .select("-signature -receiverSignature")
         .populate("passengerId", "name email phone avatarUrl")
         .sort({ scheduledTime: 1, pickupDate: 1, startDate: 1, createdAt: -1 })
         .skip(skip)
