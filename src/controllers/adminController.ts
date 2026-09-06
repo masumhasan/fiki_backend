@@ -578,8 +578,8 @@ export class AdminController {
           baseFilter._id = { $nin: parentIdsWithChildren };
         }
       } else if (type === "live") {
-        baseFilter.status = { $in: ["IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING", "ACCEPTED", "SCHEDULED", "REQUESTED"] };
-        sortLogic = { pickupDate: 1, startDate: 1, scheduledTime: 1, createdAt: 1 };
+        baseFilter.status = "IN_PROGRESS";
+        sortLogic = { inProgressAt: -1, updatedAt: -1, createdAt: -1 };
       }
 
       // Generate summary based on base filter
