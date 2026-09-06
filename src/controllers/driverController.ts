@@ -1117,7 +1117,7 @@ export class DriverController {
       const filterStart = new Date(`${activePeriod.startDate}T00:00:00.000Z`);
       const filterEnd = new Date(`${activePeriod.endDate}T23:59:59.999Z`);
 
-      // Fetch completed trips and completed shifts in selected pay period in parallel
+      // Fetch completed trips and shifts in selected pay period in parallel
       const [completedTrips, completedShifts] = await Promise.all([
         Trip.find({
           driverId,
@@ -1126,29 +1126,30 @@ export class DriverController {
         }).sort({ createdAt: -1 }).lean(),
         DriverShift.find({
           driverId,
-          status: "COMPLETED",
           startedAt: { $gte: filterStart, $lte: filterEnd },
         }).lean(),
       ]);
 
       const completedTripsCount = completedTrips.length;
-      const tripBonus = completedTripsCount * tripBonusPerRide;
+      const tripBonus = Math.round((completedTripsCount * tripBonusPerRide) * 100) / 100;
 
-      // Calculate actual worked hours from completed shift records
+      // Calculate actual clocked hours from shift records in this pay period
       const totalWorkedMinutes = completedShifts.reduce((sum: number, s: any) => {
-        return sum + (s.totalMinutes || 0);
+        if (s.totalMinutes !== undefined && s.totalMinutes !== null) {
+          return sum + s.totalMinutes;
+        }
+        if (s.startedAt && s.endedAt) {
+          return sum + Math.max(0, Math.floor((new Date(s.endedAt).getTime() - new Date(s.startedAt).getTime()) / 60000));
+        }
+        if (s.startedAt && s.status === "IN_PROGRESS") {
+          return sum + Math.max(0, Math.floor((Date.now() - new Date(s.startedAt).getTime()) / 60000));
+        }
+        return sum;
       }, 0);
-      const totalWorkedHours = parseFloat((totalWorkedMinutes / 60).toFixed(2));
+      const clockedHours = Number((totalWorkedMinutes / 60).toFixed(2));
 
-      // For current period with no shifts yet, fall back to approvedHours for estimation
-      const approvedHours = totalWorkedHours > 0
-        ? totalWorkedHours
-        : activePeriod.isCurrent
-          ? defaultApprovedHours
-          : 0;
-
-      const regularWages = hourlyRate * approvedHours;
-      const grossEarnings = regularWages + tripBonus;
+      const regularWages = Math.round((hourlyRate * clockedHours) * 100) / 100;
+      const grossEarnings = Math.round((regularWages + tripBonus) * 100) / 100;
 
       let customPeriodStatus = activePeriod.payrollStatus;
       if (profile?.periodPayrollStatuses) {
@@ -1195,8 +1196,9 @@ export class DriverController {
         success: true,
         data: {
           hourlyRate,
-          approvedHours,
-          totalWorkedHours,
+          clockedHours,
+          approvedHours: clockedHours,
+          totalWorkedHours: clockedHours,
           completedTripsCount,
           tripBonusPerRide,
           tripBonusRate: tripBonusPerRide,
