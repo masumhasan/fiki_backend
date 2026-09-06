@@ -11,7 +11,7 @@ import { Setting } from "../models/Setting.js";
 import bcrypt from "bcryptjs";
 import { getFortnightlyPeriods } from "./driverController.js";
 import { generateRecurringTripsForMaster } from "../utils/recurringTripUtils.js";
-import { parseCentralDateTime, calculateShiftDuration, getCentralTodayStr } from "../utils/dateUtils.js";
+import { parseCentralDateTime, calculateShiftDuration, getCentralTodayStr, getCentralTomorrowStr } from "../utils/dateUtils.js";
 
 const updateDriverStatusSchema = z.object({
   approvalStatus: z.enum(["APPROVED", "REJECTED"]).optional(),
@@ -564,7 +564,7 @@ export class AdminController {
       const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 10));
       const skip = (page - 1) * limit;
 
-      const { status, type, search } = req.query;
+      const { status, type, search, tab } = req.query;
       const baseFilter: Record<string, unknown> = {};
 
       let sortLogic: any = { pickupDate: 1, startDate: 1, scheduledTime: 1, createdAt: 1 };
@@ -601,7 +601,68 @@ export class AdminController {
         else if (item._id === "COMPLETED") completedCount += item.count;
       });
 
-      const filter: Record<string, unknown> = { ...baseFilter };
+      const todayStr = getCentralTodayStr();
+      const tomorrowStr = getCentralTomorrowStr();
+
+      // Build filters for each tab
+      const getTabFilter = (tabName: string): Record<string, unknown> => {
+        const f: Record<string, unknown> = { ...baseFilter };
+        if (tabName === "completed") {
+          f.status = "COMPLETED";
+        } else if (tabName === "missed") {
+          f.$or = [
+            { status: "MISSED" },
+            { 
+              status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "MISSED", "CANCELLED"] },
+              $or: [
+                { pickupDate: { $lt: todayStr } },
+                {
+                  $and: [
+                    { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                    { startDate: { $lt: todayStr } }
+                  ]
+                }
+              ]
+            }
+          ];
+        } else if (tabName === "today") {
+          f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
+          f.$or = [
+            { pickupDate: todayStr },
+            {
+              $and: [
+                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                { startDate: todayStr }
+              ]
+            }
+          ];
+        } else if (tabName === "nextDay" || tabName === "upcoming") {
+          f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
+          f.$or = [
+            { pickupDate: tomorrowStr },
+            {
+              $and: [
+                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                { startDate: tomorrowStr }
+              ]
+            }
+          ];
+        }
+        return f;
+      };
+
+      // Generate tab counts concurrently
+      const [todayCount, nextDayCount, completedTabCount, missedCount, allCount] = await Promise.all([
+        Trip.countDocuments(getTabFilter("today")),
+        Trip.countDocuments(getTabFilter("nextDay")),
+        Trip.countDocuments(getTabFilter("completed")),
+        Trip.countDocuments(getTabFilter("missed")),
+        Trip.countDocuments(getTabFilter("all")),
+      ]);
+
+      const activeTab = tab ? (tab as string) : "all";
+      const filter: Record<string, unknown> = getTabFilter(activeTab);
+
       if (status) {
         const statusStr = status as string;
         if (statusStr.includes(",")) {
@@ -653,11 +714,26 @@ export class AdminController {
         success: true,
         data: {
           trips,
+          counts: {
+            today: todayCount,
+            nextDay: nextDayCount,
+            upcoming: nextDayCount,
+            completed: completedTabCount,
+            missed: missedCount,
+            all: allCount,
+          },
           summary: {
             totalTrips: totalSummaryTrips,
             onboardNow,
             needDriver,
             completedCount,
+            tabCounts: {
+              today: todayCount,
+              nextDay: nextDayCount,
+              completed: completedTabCount,
+              missed: missedCount,
+              all: allCount,
+            },
           },
           pagination: {
             page,
