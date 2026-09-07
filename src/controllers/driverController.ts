@@ -738,18 +738,9 @@ export class DriverController {
       const driverId = req.user.userId;
 
       // Exclude master parent container requests when child legs exist
-      const masterRecurringIds = await Trip.find({
-        driverId,
-        schedule: "recurring",
-        parentRequestId: { $exists: false },
-      }).distinct("_id");
-
-      let parentIdsWithChildren: any[] = [];
-      if (masterRecurringIds.length > 0) {
-        parentIdsWithChildren = await Trip.find({
-          parentRequestId: { $in: masterRecurringIds },
-        }).distinct("parentRequestId");
-      }
+      const parentIdsWithChildren = await Trip.find({
+        parentRequestId: { $exists: true, $ne: null },
+      }).distinct("parentRequestId");
 
       const baseFilter: Record<string, unknown> = { driverId };
       if (parentIdsWithChildren.length > 0) {
@@ -977,6 +968,20 @@ export class DriverController {
         const updateObj: Record<string, unknown> = { availabilityStatus: "ONLINE" };
         if (status === "COMPLETED") {
           updateObj.$inc = { completedTripsCount: 1 };
+
+          // If this is a child leg, check if all sibling legs under the parent request are completed
+          if (trip.parentRequestId) {
+            const remainingIncomplete = await Trip.countDocuments({
+              parentRequestId: trip.parentRequestId,
+              status: { $nin: ["COMPLETED", "CANCELLED"] },
+            });
+            if (remainingIncomplete === 0) {
+              await Trip.findByIdAndUpdate(trip.parentRequestId, {
+                status: "COMPLETED",
+                completedAt: statusNow,
+              });
+            }
+          }
         }
         await DriverProfile.findOneAndUpdate({ userId: req.user.userId }, updateObj);
       }

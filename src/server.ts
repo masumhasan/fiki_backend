@@ -1,9 +1,11 @@
 import app from "./app.js";
 import { connectDB, disconnectDB } from "./config/db.js";
 import { env } from "./config/env.js";
+import { syncAllPendingRoundTrips } from "./utils/recurringTripUtils.js";
 
 async function bootstrap() {
   await connectDB();
+  await syncAllPendingRoundTrips();
 
   const server = app.listen(env.PORT, () => {
     console.log(`🚀 Fiki Transit Backend running in ${env.NODE_ENV} mode on port ${env.PORT}`);

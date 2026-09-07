@@ -39,18 +39,140 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
     masterTrip.tripType === "recurring" ||
     recurringDaysInput.length > 0;
 
-  if (!isRecurring) return;
+  const isRoundTrip =
+    masterTrip.tripType === "round-trip" ||
+    masterTrip.tripType === "round_trip" ||
+    masterTrip.isRoundTrip === true;
+
+  if (!isRecurring && !isRoundTrip) return;
 
   const startDateStr = masterTrip.startDate || masterTrip.pickupDate || masterTrip.recurringStartDate;
   const endDateStr = masterTrip.endDate || masterTrip.returnDate || masterTrip.recurringEndDate || startDateStr;
 
   if (!startDateStr) return;
 
-  const isRoundTrip =
-    masterTrip.tripType === "round-trip" ||
-    masterTrip.tripType === "round_trip" ||
-    masterTrip.isRoundTrip === true;
+  const masterId = new mongoose.Types.ObjectId(masterTrip._id.toString());
+  const passengerId = masterTrip.passengerId
+    ? new mongoose.Types.ObjectId((masterTrip.passengerId._id || masterTrip.passengerId).toString())
+    : undefined;
+  const driverId = masterTrip.driverId
+    ? new mongoose.Types.ObjectId((masterTrip.driverId._id || masterTrip.driverId).toString())
+    : undefined;
 
+  const baseSharedFields = {
+    parentRequestId: masterId,
+    passengerId,
+    driverId,
+    assignedAt: masterTrip.assignedAt,
+    acceptedAt: masterTrip.acceptedAt,
+    fare: masterTrip.fare,
+    quotedFare: masterTrip.quotedFare,
+    fullName: masterTrip.fullName,
+    phoneNumber: masterTrip.phoneNumber,
+    email: masterTrip.email,
+    dateOfBirth: masterTrip.dateOfBirth,
+    emergencyContactName: masterTrip.emergencyContactName,
+    emergencyContactPhone: masterTrip.emergencyContactPhone,
+    relationship: masterTrip.relationship,
+    mobilityOptions: masterTrip.mobilityOptions,
+    specialInstructions: masterTrip.specialInstructions,
+    accessInformation: masterTrip.accessInformation,
+    driverNotes: masterTrip.driverNotes,
+    insuranceName: masterTrip.insuranceName,
+    authNumber: masterTrip.authNumber,
+    privatePay: masterTrip.privatePay,
+    requestSource: masterTrip.requestSource,
+    passengerAvatarUrl: masterTrip.passengerAvatarUrl,
+  };
+
+  // =========================================================================
+  // CASE 1: ONE-TIME ROUND TRIP (Schedule: one-time, Trip Type: round-trip)
+  // Generates 2 distinct executable child trips with individual statuses
+  // =========================================================================
+  if (!isRecurring && isRoundTrip) {
+    // Clean up any unstarted child legs before regenerating
+    await Trip.deleteMany({
+      parentRequestId: masterTrip._id,
+      status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING"] },
+    });
+
+    const existingActiveOrCompleted = await Trip.find({
+      parentRequestId: masterTrip._id,
+      status: { $in: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING"] },
+    }).select("isReturnLeg legType status").lean();
+
+    const hasActiveOrCompletedOutbound = existingActiveOrCompleted.some((t: any) => !t.isReturnLeg);
+    const hasActiveOrCompletedReturn = existingActiveOrCompleted.some((t: any) => t.isReturnLeg);
+
+    const outboundDateStr = masterTrip.pickupDate || masterTrip.startDate || startDateStr;
+    const outboundPickupTime = masterTrip.pickupTime || "08:00 AM";
+    const outboundScheduledTime = parseCentralDateTime(outboundPickupTime, outboundDateStr);
+
+    const returnDateStr = masterTrip.returnDate || masterTrip.endDate || outboundDateStr;
+    const returnPickupTime = masterTrip.returnPickupTime || "05:00 PM";
+    const returnScheduledTime = parseCentralDateTime(returnPickupTime, returnDateStr);
+
+    const outboundPickupAddress = masterTrip.pickupLocation?.address || masterTrip.pickupAddress || masterTrip.streetAddress;
+    const outboundDropoffAddress = masterTrip.dropoffLocation?.address || masterTrip.destinationAddress;
+
+    const returnPickupAddr = masterTrip.returnPickupAddress || outboundDropoffAddress || outboundPickupAddress;
+    const returnDropoffAddr = masterTrip.returnDestinationAddress || outboundPickupAddress || outboundDropoffAddress;
+
+    const childDocs: any[] = [];
+
+    // 1. Outbound Leg
+    if (!hasActiveOrCompletedOutbound) {
+      const outboundStatus = driverId ? (masterTrip.status || "ACCEPTED") : (masterTrip.status || "REQUESTED");
+      childDocs.push({
+        ...baseSharedFields,
+        schedule: "one-time",
+        status: outboundStatus,
+        tripType: "round-trip",
+        isReturnLeg: false,
+        legType: "OUTBOUND",
+        pickupDate: outboundDateStr,
+        pickupTime: outboundPickupTime,
+        scheduledTime: outboundScheduledTime,
+        startDate: outboundDateStr,
+        endDate: outboundDateStr,
+        pickupLocation: { address: outboundPickupAddress },
+        dropoffLocation: { address: outboundDropoffAddress },
+      });
+    }
+
+    // 2. Return Leg
+    if (!hasActiveOrCompletedReturn) {
+      // Return leg starts in ACCEPTED (or REQUESTED if no driver) so it does not auto-advance with outbound
+      const returnStatus = driverId ? "ACCEPTED" : (masterTrip.status === "REQUESTED" ? "REQUESTED" : "ACCEPTED");
+      childDocs.push({
+        ...baseSharedFields,
+        schedule: "one-time",
+        status: returnStatus,
+        tripType: "round-trip",
+        isReturnLeg: true,
+        legType: "RETURN",
+        pickupDate: returnDateStr,
+        pickupTime: returnPickupTime,
+        scheduledTime: returnScheduledTime,
+        startDate: returnDateStr,
+        endDate: returnDateStr,
+        returnPickupTime,
+        returnPickupAddress: returnPickupAddr,
+        returnDestinationAddress: returnDropoffAddr,
+        pickupLocation: { address: returnPickupAddr },
+        dropoffLocation: { address: returnDropoffAddr },
+      });
+    }
+
+    if (childDocs.length > 0) {
+      await Trip.insertMany(childDocs);
+    }
+    return;
+  }
+
+  // =========================================================================
+  // CASE 2: RECURRING TRIPS (Daily / Weekly series across date ranges)
+  // =========================================================================
   const parseDateParts = (str: any): { year: number; month: number; day: number } | null => {
     if (!str) return null;
     const raw = String(str).trim();
@@ -92,7 +214,7 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
   // Delete all old uncompleted child trips for this master request before recreating
   await Trip.deleteMany({
     parentRequestId: masterTrip._id,
-    status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVED"] },
+    status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING"] },
   });
 
   const dayMap: Record<number, string[]> = {
@@ -222,5 +344,39 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
 
   if (childDocs.length > 0) {
     await Trip.insertMany(childDocs);
+  }
+}
+
+/**
+ * Scans the database for any master round-trip requests that do not yet have child legs generated,
+ * and automatically expands them into two separate executable child trips.
+ */
+export async function syncAllPendingRoundTrips(): Promise<number> {
+  try {
+    const unexpandedMasterRoundTrips = await Trip.find({
+      parentRequestId: { $exists: false },
+      $or: [
+        { tripType: "round-trip" },
+        { tripType: "round_trip" },
+        { isRoundTrip: true },
+      ],
+      status: { $nin: ["CANCELLED", "QUOTE_DENIED"] },
+    }).lean();
+
+    let expandedCount = 0;
+    for (const master of unexpandedMasterRoundTrips) {
+      const childCount = await Trip.countDocuments({ parentRequestId: master._id });
+      if (childCount === 0) {
+        await generateRecurringTripsForMaster(master);
+        expandedCount++;
+      }
+    }
+    if (expandedCount > 0) {
+      console.log(`✨ Automatically expanded ${expandedCount} one-time round-trip request(s) into distinct child legs.`);
+    }
+    return expandedCount;
+  } catch (error) {
+    console.error("❌ Failed to sync pending round trips:", error);
+    return 0;
   }
 }

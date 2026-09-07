@@ -199,6 +199,12 @@ export class TripController {
       trip.cancelledAt = new Date();
       await trip.save();
 
+      // Cancel any incomplete child legs if this is a master request
+      await Trip.updateMany(
+        { parentRequestId: trip._id, status: { $nin: ["COMPLETED", "CANCELLED"] } },
+        { $set: { status: "CANCELLED", cancelledAt: trip.cancelledAt, cancellationReason: "Cancelled by passenger" } }
+      );
+
       res.status(200).json({
         success: true,
         data: trip,

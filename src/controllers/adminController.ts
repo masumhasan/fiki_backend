@@ -572,8 +572,7 @@ export class AdminController {
       if (type === "requests" || type === "master") {
         baseFilter.parentRequestId = { $exists: false };
       } else if (type === "trips" || type === "child") {
-        const masterRecurringIds = await Trip.find({ schedule: "recurring", parentRequestId: { $exists: false } }).distinct("_id");
-        const parentIdsWithChildren = await Trip.find({ parentRequestId: { $in: masterRecurringIds } }).distinct("parentRequestId");
+        const parentIdsWithChildren = await Trip.find({ parentRequestId: { $exists: true, $ne: null } }).distinct("parentRequestId");
         if (parentIdsWithChildren.length > 0) {
           baseFilter._id = { $nin: parentIdsWithChildren };
         }
@@ -1132,6 +1131,12 @@ export class AdminController {
       trip.cancelledAt = new Date();
       trip.cancellationReason = req.body?.reason || "Cancelled by admin";
       await trip.save();
+
+      // Cancel any incomplete child legs if this is a master request
+      await Trip.updateMany(
+        { parentRequestId: trip._id, status: { $nin: ["COMPLETED", "CANCELLED"] } },
+        { $set: { status: "CANCELLED", cancelledAt: trip.cancelledAt, cancellationReason: trip.cancellationReason } }
+      );
 
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
