@@ -6,12 +6,14 @@ import path from "path";
 const bucketName = process.env.AWS_BUCKET_NAME || "fiki-400658575804-us-east-1-an";
 const region = process.env.AWS_REGION || "us-east-1";
 
+const sessionToken = process.env.AWS_SESSION_TOKEN?.trim();
+
 export const s3Client = new S3Client({
   region,
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-    sessionToken: process.env.AWS_SESSION_TOKEN || undefined,
+    ...(sessionToken ? { sessionToken } : {}),
   },
 });
 
