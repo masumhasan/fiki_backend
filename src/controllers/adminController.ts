@@ -662,6 +662,10 @@ export class AdminController {
       const activeTab = tab ? (tab as string) : "all";
       const filter: Record<string, unknown> = getTabFilter(activeTab);
 
+      if (activeTab === "missed") {
+        sortLogic = { pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 };
+      }
+
       if (status) {
         const statusStr = status as string;
         if (statusStr.includes(",")) {

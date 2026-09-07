@@ -761,10 +761,15 @@ export class DriverController {
           f.$or = [
             { status: "MISSED" },
             { 
-              status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "MISSED", "CANCELLED"] },
+              status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "MISSED", "CANCELLED", "QUOTE_DENIED"] },
               $or: [
                 { pickupDate: { $lt: todayStr } },
-                { startDate: { $lt: todayStr } }
+                {
+                  $and: [
+                    { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                    { startDate: { $lt: todayStr } }
+                  ]
+                }
               ]
             }
           ];
@@ -791,10 +796,14 @@ export class DriverController {
       const activeTab = tab ? (tab as string) : "today";
       const activeFilter = getTabFilter(activeTab);
 
+      const sortLogic: any = activeTab === "missed"
+        ? { pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 }
+        : { scheduledTime: 1, pickupDate: 1, startDate: 1, createdAt: -1 };
+
       const trips = await Trip.find(activeFilter)
         .select("-signature -receiverSignature")
         .populate("passengerId", "name email phone avatarUrl")
-        .sort({ scheduledTime: 1, pickupDate: 1, startDate: 1, createdAt: -1 })
+        .sort(sortLogic)
         .skip(skip)
         .limit(limit)
         .lean();
