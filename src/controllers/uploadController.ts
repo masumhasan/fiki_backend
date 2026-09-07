@@ -43,8 +43,15 @@ export class UploadController {
         success: false,
         error: { code: "NO_FILE_PROVIDED", message: "No image file or base64 data provided" },
       });
-    } catch (error) {
-      next(error);
+    } catch (error: any) {
+      console.error("[UploadController] Upload failed:", error);
+      res.status(400).json({
+        success: false,
+        error: {
+          code: "UPLOAD_FAILED",
+          message: error?.message || "Failed to upload image to S3 storage",
+        },
+      });
     }
   }
 }
