@@ -868,23 +868,128 @@ export class AdminController {
   async rejectRideRequest(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
       const trip = await Trip.findById(id);
       if (!trip) {
         res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
         return;
       }
 
-      const previousStatus = trip.status;
-      trip.status = "QUOTE_DENIED";
-      trip.cancelledAt = new Date();
-      trip.cancellationReason = req.body?.reason || "Rejected by admin";
-      await trip.save();
+      // 1. Check if this trip itself is already in a completed or cancelled state
+      if (trip.status === "COMPLETED") {
+        res.status(409).json({
+          success: false,
+          error: { code: "TRIP_ALREADY_COMPLETED", message: "Cannot reject a ride request that has already been completed." },
+        });
+        return;
+      }
+
+      if (trip.status === "CANCELLED" || trip.status === "QUOTE_DENIED") {
+        res.status(409).json({
+          success: false,
+          error: { code: "INVALID_STATE", message: `Ride request is already ${trip.status}` },
+        });
+        return;
+      }
+
+      if (["IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED"].includes(trip.status)) {
+        res.status(409).json({
+          success: false,
+          error: {
+            code: "TRIP_IN_PROGRESS",
+            message: "Cannot reject a ride request that is currently in progress. Please cancel the trip if necessary.",
+          },
+        });
+        return;
+      }
 
       const masterIdObj = trip.parentRequestId || trip._id;
-      await Trip.updateMany(
-        { $or: [{ _id: masterIdObj }, { parentRequestId: masterIdObj }] },
-        { $set: { status: "QUOTE_DENIED", cancelledAt: trip.cancelledAt, cancellationReason: trip.cancellationReason } }
+      const reason = req.body?.reason || "Rejected by admin";
+      const now = new Date();
+      const previousStatus = trip.status;
+
+      // 2. Check child legs under this master request (e.g. Outbound and Return legs)
+      const childTrips = await Trip.find({
+        parentRequestId: masterIdObj,
+      });
+
+      const completedLegs = childTrips.filter((t) => t.status === "COMPLETED");
+      const activeLegs = childTrips.filter((t) =>
+        ["IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED"].includes(t.status)
       );
+
+      if (activeLegs.length > 0) {
+        res.status(409).json({
+          success: false,
+          error: {
+            code: "TRIP_IN_PROGRESS",
+            message: "Cannot reject a ride request while a leg is currently in progress. Please cancel the trip if necessary.",
+          },
+        });
+        return;
+      }
+
+      if (childTrips.length > 0 && completedLegs.length === childTrips.length) {
+        res.status(409).json({
+          success: false,
+          error: {
+            code: "TRIP_ALREADY_COMPLETED",
+            message: "Cannot reject a ride request where all legs have already been completed.",
+          },
+        });
+        return;
+      }
+
+      // 3. If at least one leg has already been completed (e.g. Outbound completed, Return pending)
+      if (completedLegs.length > 0) {
+        // Cancel ONLY unstarted/pending child legs (e.g. Return leg). NEVER overwrite COMPLETED legs!
+        await Trip.updateMany(
+          {
+            parentRequestId: masterIdObj,
+            status: { $nin: ["COMPLETED", "CANCELLED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED"] },
+          },
+          {
+            $set: {
+              status: "CANCELLED",
+              cancelledAt: now,
+              cancellationReason: reason,
+            },
+          }
+        );
+
+        // Keep master request marked COMPLETED (since work was fulfilled) with note about cancelled remaining leg
+        const masterTrip = trip._id.equals(masterIdObj) ? trip : await Trip.findById(masterIdObj);
+        if (masterTrip) {
+          masterTrip.status = "COMPLETED";
+          masterTrip.completedAt = masterTrip.completedAt || now;
+          masterTrip.cancellationReason = `Remaining leg(s) cancelled by admin: ${reason}`;
+          await masterTrip.save();
+        }
+      } else {
+        // No legs have been completed: Safe to reject the entire quote/request
+        trip.status = "QUOTE_DENIED";
+        trip.cancelledAt = now;
+        trip.cancellationReason = reason;
+        await trip.save();
+
+        await Trip.updateMany(
+          {
+            $or: [{ _id: masterIdObj }, { parentRequestId: masterIdObj }],
+            status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED"] },
+          },
+          {
+            $set: {
+              status: "QUOTE_DENIED",
+              cancelledAt: now,
+              cancellationReason: reason,
+            },
+          }
+        );
+      }
 
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
@@ -1087,6 +1192,12 @@ export class AdminController {
         return;
       }
 
+      // Fetch child legs if this is a master request or has child legs
+      const childTrips = await Trip.find({ parentRequestId: trip._id })
+        .populate("driverId", "name email phone avatarUrl")
+        .sort({ scheduledTime: 1, pickupDate: 1 })
+        .lean();
+
       let driverProfile = null;
       if (trip.driverId) {
         const driverObjId = (trip.driverId as any)._id || trip.driverId;
@@ -1103,6 +1214,7 @@ export class AdminController {
         success: true,
         data: {
           ...trip,
+          childTrips,
           driverProfile,
           auditLogs,
         },
@@ -1131,9 +1243,20 @@ export class AdminController {
         return;
       }
 
-      trip.status = "CANCELLED";
+      const hasCompletedChild = await Trip.exists({
+        parentRequestId: trip._id,
+        status: "COMPLETED",
+      });
+
       trip.cancelledAt = new Date();
       trip.cancellationReason = req.body?.reason || "Cancelled by admin";
+      if (hasCompletedChild) {
+        trip.status = "COMPLETED";
+        trip.completedAt = trip.completedAt || trip.cancelledAt;
+        trip.cancellationReason = `Remaining leg(s) cancelled by admin: ${trip.cancellationReason}`;
+      } else {
+        trip.status = "CANCELLED";
+      }
       await trip.save();
 
       // Cancel any incomplete child legs if this is a master request
@@ -1141,6 +1264,25 @@ export class AdminController {
         { parentRequestId: trip._id, status: { $nin: ["COMPLETED", "CANCELLED"] } },
         { $set: { status: "CANCELLED", cancelledAt: trip.cancelledAt, cancellationReason: trip.cancellationReason } }
       );
+
+      // If cancelling an individual child leg, update master request if all legs finished
+      if (trip.parentRequestId) {
+        const remainingIncomplete = await Trip.countDocuments({
+          parentRequestId: trip.parentRequestId,
+          status: { $nin: ["COMPLETED", "CANCELLED"] },
+        });
+        if (remainingIncomplete === 0) {
+          const anyCompleted = await Trip.exists({
+            parentRequestId: trip.parentRequestId,
+            status: "COMPLETED",
+          });
+          await Trip.findByIdAndUpdate(trip.parentRequestId, {
+            status: anyCompleted ? "COMPLETED" : "CANCELLED",
+            completedAt: anyCompleted ? new Date() : undefined,
+            cancelledAt: anyCompleted ? undefined : new Date(),
+          });
+        }
+      }
 
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
