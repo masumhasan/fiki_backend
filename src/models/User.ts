@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
+import { ensureS3Image } from "../utils/imageHelper.js";
 
 export type UserRole = "ADMIN" | "DRIVER" | "USER";
 export type AccountStatus = "PENDING" | "ACTIVE" | "SUSPENDED" | "INACTIVE";
@@ -68,5 +69,12 @@ const userSchema = new Schema<IUser>(
 );
 
 userSchema.index({ email: 1, role: 1 });
+
+// Safety Net: Guarantee no raw base64 strings are saved to MongoDB
+userSchema.pre("save", async function () {
+  if (this.isModified("avatarUrl") && this.avatarUrl) {
+    this.avatarUrl = (await ensureS3Image(this.avatarUrl, "user-avatars", "avatar")) || undefined;
+  }
+});
 
 export const User = mongoose.model<IUser>("User", userSchema);

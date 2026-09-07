@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
+import { ensureS3Image } from "../utils/imageHelper.js";
 
 export type TripStatus =
   | "REQUESTED"
@@ -281,5 +282,18 @@ tripSchema.index({ driverId: 1, pickupDate: 1 });
 tripSchema.index({ parentRequestId: 1 });
 tripSchema.index({ driverId: 1, schedule: 1, parentRequestId: 1 });
 tripSchema.index({ scheduledTime: 1, pickupDate: 1, createdAt: -1 });
+
+// Safety Net: Guarantee no raw base64 strings are saved to MongoDB
+tripSchema.pre("save", async function () {
+  if (this.isModified("passengerAvatarUrl") && this.passengerAvatarUrl) {
+    this.passengerAvatarUrl = (await ensureS3Image(this.passengerAvatarUrl, "passenger-avatars", "avatar")) || undefined;
+  }
+  if (this.isModified("signature") && this.signature) {
+    this.signature = (await ensureS3Image(this.signature, "signatures", "signature")) || undefined;
+  }
+  if (this.isModified("receiverSignature") && this.receiverSignature) {
+    this.receiverSignature = (await ensureS3Image(this.receiverSignature, "signatures", "receiver_sig")) || undefined;
+  }
+});
 
 export const Trip = mongoose.model<ITrip>("Trip", tripSchema);

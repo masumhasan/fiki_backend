@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
+import { ensureS3Image } from "../utils/imageHelper.js";
 
 export type ShiftStatus = "IN_PROGRESS" | "COMPLETED";
 
@@ -142,5 +143,25 @@ const driverShiftSchema = new Schema<IDriverShift>(
 driverShiftSchema.index({ driverId: 1, status: 1 });
 driverShiftSchema.index({ driverId: 1, shiftDate: 1, createdAt: -1 });
 driverShiftSchema.index({ driverId: 1, pendingEndReport: 1 });
+
+// Safety Net: Guarantee no raw base64 strings are saved to MongoDB
+driverShiftSchema.pre("save", async function () {
+  if (this.isModified("startPhotoUrl") && this.startPhotoUrl) {
+    this.startPhotoUrl = (await ensureS3Image(this.startPhotoUrl, "shift-odometers", "start_odo")) || undefined;
+  }
+  if (this.isModified("endPhotoUrl") && this.endPhotoUrl) {
+    this.endPhotoUrl = (await ensureS3Image(this.endPhotoUrl, "shift-odometers", "end_odo")) || undefined;
+  }
+  if (this.isModified("startPhotoUrls") && Array.isArray(this.startPhotoUrls)) {
+    this.startPhotoUrls = await Promise.all(
+      this.startPhotoUrls.map(async (u) => (await ensureS3Image(u, "vehicle-photos", "start_photo")) || u)
+    );
+  }
+  if (this.isModified("endPhotoUrls") && Array.isArray(this.endPhotoUrls)) {
+    this.endPhotoUrls = await Promise.all(
+      this.endPhotoUrls.map(async (u) => (await ensureS3Image(u, "vehicle-photos", "end_photo")) || u)
+    );
+  }
+});
 
 export const DriverShift = mongoose.model<IDriverShift>("DriverShift", driverShiftSchema);

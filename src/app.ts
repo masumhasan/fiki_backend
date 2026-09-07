@@ -83,6 +83,7 @@ app.use("/api/v1/trips", tripRoutes);
 app.use("/api/v1/landing", landingRoutes);
 app.use("/api/v1/settings", settingsRoutes);
 app.use("/api/v1/upload", uploadRoutes);
+app.use("/api/upload", uploadRoutes);
 
 // 404 Handler for unmatched routes
 app.use((req, res) => {

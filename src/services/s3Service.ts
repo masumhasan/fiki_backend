@@ -2,19 +2,29 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import dotenv from "dotenv";
 
-const bucketName = process.env.AWS_BUCKET_NAME || "fiki-400658575804-us-east-1-an";
-const region = process.env.AWS_REGION || "us-east-1";
+dotenv.config();
 
-const sessionToken = process.env.AWS_SESSION_TOKEN?.trim();
+export function getS3Client(): S3Client {
+  const region = process.env.AWS_REGION || "us-east-1";
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID?.trim() || "";
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY?.trim() || "";
+  const sessionToken = process.env.AWS_SESSION_TOKEN?.trim();
 
-export const s3Client = new S3Client({
-  region,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
-    ...(sessionToken ? { sessionToken } : {}),
-  },
+  return new S3Client({
+    region,
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+      ...(sessionToken ? { sessionToken } : {}),
+    },
+  });
+}
+
+// Proxied S3Client so any caller gets live credentials from process.env
+export const s3Client = new Proxy({} as S3Client, {
+  get: (_target, prop) => (getS3Client() as any)[prop],
 });
 
 function sanitizeExtension(originalName: string, mimeType: string): string {
@@ -105,6 +115,10 @@ export async function uploadImageToS3(
   }
 
   try {
+    const bucketName = process.env.AWS_BUCKET_NAME || "fiki-400658575804-us-east-1-an";
+    const region = process.env.AWS_REGION || "us-east-1";
+    const client = getS3Client();
+
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: key,
@@ -112,7 +126,7 @@ export async function uploadImageToS3(
       ContentType: mimeType,
     });
 
-    await s3Client.send(command);
+    await client.send(command);
 
     // Return standard public S3 URL
     return `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
@@ -123,9 +137,7 @@ export async function uploadImageToS3(
       return saveFileLocally(fileBuffer, key, customBaseUrl);
     } catch (saveError) {
       console.error("Local file save error:", saveError);
-      // Last resort: inline data URI
-      const base64 = fileBuffer.toString("base64");
-      return `data:${mimeType};base64,${base64}`;
+      throw new Error(`Failed to upload file to S3 and failed local fallback: ${(saveError as any)?.message || saveError}`);
     }
   }
 }
