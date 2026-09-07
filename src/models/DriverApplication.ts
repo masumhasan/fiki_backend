@@ -1,4 +1,5 @@
 import { Document, Schema, model } from "mongoose";
+import { ensureS3Image } from "../utils/imageHelper.js";
 
 export interface IDriverApplication extends Document {
   applicationId: string;
@@ -142,5 +143,19 @@ const driverApplicationSchema = new Schema<IDriverApplication>(
   },
   { timestamps: true }
 );
+
+// Safety Net: Guarantee signature and bidForm are stored on S3
+driverApplicationSchema.pre("save", async function () {
+  if (this.isModified("signature") && this.signature) {
+    if (this.signature.startsWith("data:") || this.signature.includes("/uploads/")) {
+      this.signature = (await ensureS3Image(this.signature, "signatures", "signature")) || this.signature;
+    }
+  }
+  if (this.isModified("bidForm") && this.bidForm) {
+    if (this.bidForm.startsWith("data:") || this.bidForm.includes("/uploads/")) {
+      this.bidForm = (await ensureS3Image(this.bidForm, "driver-documents", "bid_form")) || this.bidForm;
+    }
+  }
+});
 
 export const DriverApplication = model<IDriverApplication>("DriverApplication", driverApplicationSchema);

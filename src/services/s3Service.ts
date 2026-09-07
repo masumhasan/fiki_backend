@@ -107,42 +107,37 @@ export async function uploadImageToS3(
   originalName: string,
   mimeType: string,
   category = "shift-odometers",
-  customBaseUrl?: string
+  _customBaseUrl?: string
 ): Promise<string> {
   const key = generateStructuredS3Key(category, originalName, mimeType);
 
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID?.trim();
   const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY?.trim();
 
-  // If credentials are completely empty, save directly to local disk
+  // Strict S3 Enforcement: Never silently write to local disk
   if (!accessKeyId || !secretAccessKey) {
-    return saveFileLocally(fileBuffer, key, customBaseUrl);
+    throw new Error(
+      "AWS S3 credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) are missing in environment variables. S3 storage is strictly required."
+    );
   }
 
+  const bucketName = process.env.AWS_BUCKET_NAME || "fiki-400658575804-us-east-1-an";
+  const region = process.env.AWS_REGION || "us-east-1";
+  const client = getS3Client();
+
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    Body: fileBuffer,
+    ContentType: mimeType,
+  });
+
   try {
-    const bucketName = process.env.AWS_BUCKET_NAME || "fiki-400658575804-us-east-1-an";
-    const region = process.env.AWS_REGION || "us-east-1";
-    const client = getS3Client();
-
-    const command = new PutObjectCommand({
-      Bucket: bucketName,
-      Key: key,
-      Body: fileBuffer,
-      ContentType: mimeType,
-    });
-
     await client.send(command);
-
     // Return standard public S3 URL
     return `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
   } catch (error) {
-    console.warn(`AWS S3 Upload failed, saving locally instead (${key}):`, (error as any)?.message || error);
-    // Reliable disk fallback: Save to local uploads folder and return HTTP URL
-    try {
-      return saveFileLocally(fileBuffer, key, customBaseUrl);
-    } catch (saveError) {
-      console.error("Local file save error:", saveError);
-      throw new Error(`Failed to upload file to S3 and failed local fallback: ${(saveError as any)?.message || saveError}`);
-    }
+    console.error(`AWS S3 PutObject failed for key (${key}):`, error);
+    throw new Error(`Failed to upload image to AWS S3: ${(error as any)?.message || error}`);
   }
 }

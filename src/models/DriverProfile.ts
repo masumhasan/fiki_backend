@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
+import { ensureS3Image } from "../utils/imageHelper.js";
 
 export type DriverApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 export type DriverAvailabilityStatus = "OFFLINE" | "ONLINE" | "ASSIGNED" | "UNAVAILABLE";
@@ -144,5 +145,12 @@ const driverProfileSchema = new Schema<IDriverProfile>(
 );
 
 driverProfileSchema.index({ "currentLocation": "2dsphere" });
+
+// Safety Net: Guarantee no raw base64 or non-S3 local URLs are saved to MongoDB
+driverProfileSchema.pre("save", async function () {
+  if (this.isModified("avatarUrl") && this.avatarUrl) {
+    this.avatarUrl = (await ensureS3Image(this.avatarUrl, "user-avatars", "avatar")) || undefined;
+  }
+});
 
 export const DriverProfile = mongoose.model<IDriverProfile>("DriverProfile", driverProfileSchema);
