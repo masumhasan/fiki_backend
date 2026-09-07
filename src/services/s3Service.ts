@@ -77,11 +77,16 @@ export function generateStructuredS3Key(
 }
 
 export function getBaseUrl(customBaseUrl?: string): string {
-  if (customBaseUrl) return customBaseUrl.replace(/\/$/, "");
-  if (process.env.BASE_URL) return process.env.BASE_URL.replace(/\/$/, "");
-  if (process.env.BACKEND_URL) return process.env.BACKEND_URL.replace(/\/$/, "");
-  if (process.env.NODE_ENV === "production") return "https://api.fikitransit.com";
-  return `http://localhost:${process.env.PORT || 5000}`;
+  if (customBaseUrl && !customBaseUrl.includes("localhost") && !customBaseUrl.includes("127.0.0.1")) {
+    return customBaseUrl.replace(/\/$/, "");
+  }
+  if (process.env.BASE_URL && !process.env.BASE_URL.includes("localhost") && !process.env.BASE_URL.includes("127.0.0.1")) {
+    return process.env.BASE_URL.replace(/\/$/, "");
+  }
+  if (process.env.BACKEND_URL && !process.env.BACKEND_URL.includes("localhost") && !process.env.BACKEND_URL.includes("127.0.0.1")) {
+    return process.env.BACKEND_URL.replace(/\/$/, "");
+  }
+  return "https://api.fikitransit.com";
 }
 
 export function saveFileLocally(fileBuffer: Buffer, relativeKey: string, customBaseUrl?: string): string {
