@@ -30,19 +30,25 @@ export const settingsController = {
         return;
       }
 
-      const parsed = JSON.parse(setting.value);
+      const cleanHtml = (raw: string): string => {
+        if (!raw) return "";
+        return raw.replace(/&nbsp;/g, " ").replace(/\u00A0/g, " ");
+      };
+
       const normalize = (val: any): string => {
         if (!val) return "";
-        if (typeof val === "string") return val;
+        if (typeof val === "string") return cleanHtml(val);
         if (typeof val === "object") {
           const parts = [val.general, val.passengers, val.drivers].filter(
             (p) => p && typeof p === "string" && p.trim() !== ""
           );
           if (parts.length === 0) return "";
-          return Array.from(new Set(parts)).join("<br/><br/>");
+          return cleanHtml(Array.from(new Set(parts)).join("<br/><br/>"));
         }
         return "";
       };
+
+      const parsed = JSON.parse(setting.value);
 
       const normalized = {
         privacyPolicy: normalize(parsed.privacyPolicy),

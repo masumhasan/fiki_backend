@@ -2433,9 +2433,25 @@ export class AdminController {
         return;
       }
 
+      const cleanHtml = (raw: any): any => {
+        if (typeof raw === "string") {
+          return raw.replace(/&nbsp;/g, " ").replace(/\u00A0/g, " ");
+        }
+        if (typeof raw === "object" && raw !== null) {
+          const resObj: any = {};
+          for (const k of Object.keys(raw)) {
+            resObj[k] = cleanHtml(raw[k]);
+          }
+          return resObj;
+        }
+        return raw;
+      };
+
+      const cleanedContent = cleanHtml(crmContent);
+
       const setting = await Setting.findOneAndUpdate(
         { key: "crmContent" },
-        { value: JSON.stringify(crmContent) },
+        { value: JSON.stringify(cleanedContent) },
         { new: true, upsert: true }
       );
 
