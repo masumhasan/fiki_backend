@@ -775,10 +775,26 @@ export class DriverController {
           ];
         } else if (tabName === "today") {
           f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
-          f.$or = [{ pickupDate: todayStr }, { startDate: todayStr }];
+          f.$or = [
+            { pickupDate: todayStr },
+            {
+              $and: [
+                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                { startDate: todayStr }
+              ]
+            }
+          ];
         } else if (tabName === "upcoming" || tabName === "nextDay") {
           f.status = { $nin: ["COMPLETED", "MISSED", "CANCELLED"] };
-          f.$or = [{ pickupDate: tomorrowStr }, { startDate: tomorrowStr }];
+          f.$or = [
+            { pickupDate: tomorrowStr },
+            {
+              $and: [
+                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                { startDate: tomorrowStr }
+              ]
+            }
+          ];
         } else if (tabName === "all") {
           // returns baseFilter
         }
@@ -1350,7 +1366,12 @@ export class DriverController {
           driverId,
           $or: [
             { pickupDate: todayStr },
-            { createdAt: { $gte: todayStart, $lt: todayEnd } }
+            {
+              $and: [
+                { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                { $or: [{ startDate: todayStr }, { createdAt: { $gte: todayStart, $lt: todayEnd } }] }
+              ]
+            }
           ]
         }).lean(),
 
