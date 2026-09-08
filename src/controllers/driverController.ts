@@ -812,8 +812,8 @@ export class DriverController {
       const activeTab = tab ? (tab as string) : "today";
       const activeFilter = getTabFilter(activeTab);
 
-      const sortLogic: any = activeTab === "missed"
-        ? { pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 }
+      const sortLogic: any = (activeTab === "missed" || activeTab === "completed")
+        ? { pickupDate: -1, startDate: -1, scheduledTime: -1, completedAt: -1, createdAt: -1 }
         : { scheduledTime: 1, pickupDate: 1, startDate: 1, createdAt: -1 };
 
       const trips = await Trip.find(activeFilter)
