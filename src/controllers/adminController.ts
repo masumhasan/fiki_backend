@@ -1485,6 +1485,7 @@ export class AdminController {
         newPassengersThisWeek,
         topDriversAgg,
         recentTripsDocs,
+        pendingRideRequestsDocs,
       ] = await Promise.all([
         Trip.aggregate([
           {
@@ -1495,7 +1496,20 @@ export class AdminController {
                     _id: null,
                     totalTrips: { $sum: 1 },
                     completedTrips: { $sum: { $cond: [{ $eq: ["$status", "COMPLETED"] }, 1, 0] } },
-                    pendingRequests: { $sum: { $cond: [{ $in: ["$status", ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT"]] }, 1, 0] } },
+                    pendingRequests: {
+                      $sum: {
+                        $cond: [
+                          {
+                            $and: [
+                              { $or: [{ $eq: [{ $ifNull: ["$parentRequestId", null] }, null] }] },
+                              { $in: ["$status", ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT"]] }
+                            ]
+                          },
+                          1,
+                          0
+                        ]
+                      }
+                    },
                     cancelledTrips: { $sum: { $cond: [{ $eq: ["$status", "CANCELLED"] }, 1, 0] } },
                     rejectedTrips: { $sum: { $cond: [{ $eq: ["$status", "QUOTE_DENIED"] }, 1, 0] } },
                     todayTrips: { $sum: { $cond: [{ $gte: ["$createdAt", todayStart] }, 1, 0] } },
@@ -1617,7 +1631,15 @@ export class AdminController {
           .populate("passengerId", "name avatarUrl")
           .sort({ createdAt: -1 })
           .limit(10)
-          .lean()
+          .lean(),
+        Trip.find({
+          parentRequestId: { $exists: false },
+          status: { $in: ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT"] },
+        })
+          .populate("passengerId", "name avatarUrl phone")
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .lean(),
       ]);
 
       const s = facetResult?.stats?.[0] || {};
@@ -1820,7 +1842,7 @@ export class AdminController {
         };
       });
 
-      // 8. Activity Feed List for Dashboard Card
+      // 8. Activity Feed List for Dashboard Card (Retained for backwards compatibility)
       const activityFeed = recentTripsDocs.slice(0, 5).map((t: any) => {
         const rideId = `T-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
         const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
@@ -1840,6 +1862,47 @@ export class AdminController {
         const mins = Math.max(1, Math.floor(diffMs / 60000));
         const time = mins < 60 ? `${mins} mins ago` : `${Math.floor(mins / 60)} hours ago`;
         return { title, time, color };
+      });
+
+      // 8b. Pending Ride Requests for Dashboard Card
+      const pendingRideRequests = (pendingRideRequestsDocs || []).map((t: any) => {
+        const id = t._id.toString();
+        const shortId = id.substring(id.length - 8).toUpperCase();
+        const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
+        const initials = passengerName
+          .split(" ")
+          .map((n: string) => n[0])
+          .join("")
+          .toUpperCase()
+          .substring(0, 2) || "PA";
+        const avatarUrl = t.passengerAvatarUrl || (t.passengerId as any)?.avatarUrl || "";
+        const pickup = t.pickupLocation?.address || t.streetAddress || "Pickup location";
+        const destination = t.dropoffLocation?.address || t.destinationAddress || "Destination";
+        
+        let statusLabel = "Pending Review";
+        if (t.status === "QUOTE_COUNTERED") statusLabel = "Counter Offer";
+        else if (t.status === "QUOTE_SENT") statusLabel = "Quote Sent";
+
+        const tripType = t.tripType || (t.schedule === "recurring" ? "recurring" : t.returnDate ? "round-trip" : "one-way");
+        const fare = t.fare || t.quotedFare || t.counterOffer || null;
+        const fareStr = fare ? `$${Number(fare).toFixed(2)}` : null;
+
+        return {
+          id,
+          shortId,
+          passenger: passengerName,
+          initials,
+          avatarUrl,
+          pickup,
+          destination,
+          status: t.status,
+          statusLabel,
+          tripType,
+          schedule: t.schedule || "one-time",
+          fareStr,
+          scheduledTime: t.scheduledTime || t.pickupTime || t.startDate || null,
+          createdAt: t.createdAt,
+        };
       });
 
       // 9. Driver Performance by period (real data from MongoDB)
@@ -1934,6 +1997,7 @@ export class AdminController {
           yearlyTripVolume,
           driverStatus,
           activityFeed,
+          pendingRideRequests,
           monthlyRidePerformance,
           revenueOverview,
           topDrivers,
