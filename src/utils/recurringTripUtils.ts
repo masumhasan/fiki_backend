@@ -83,6 +83,20 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
     privatePay: masterTrip.privatePay,
     requestSource: masterTrip.requestSource,
     passengerAvatarUrl: masterTrip.passengerAvatarUrl,
+    signature: masterTrip.signature,
+    signatureDate: masterTrip.signatureDate,
+    printedName: masterTrip.printedName,
+    relationshipToPassenger: masterTrip.relationshipToPassenger,
+    consentPhoto: masterTrip.consentPhoto,
+    consentTransport: masterTrip.consentTransport,
+    consentEsignature: masterTrip.consentEsignature,
+    consentHipaa: masterTrip.consentHipaa,
+    guardianName: masterTrip.guardianName,
+    guardianPhone: masterTrip.guardianPhone,
+    guardianEmail: masterTrip.guardianEmail,
+    caseManagerName: masterTrip.caseManagerName,
+    caseManagerPhone: masterTrip.caseManagerPhone,
+    caseManagerEmail: masterTrip.caseManagerEmail,
   };
 
   // =========================================================================

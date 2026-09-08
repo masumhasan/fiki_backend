@@ -1192,6 +1192,27 @@ export class AdminController {
         return;
       }
 
+      // If viewing a child leg that was generated without signature, inherit from parent request
+      if (trip.parentRequestId && (!trip.signature || !trip.printedName)) {
+        const parent = await Trip.findById(trip.parentRequestId).lean();
+        if (parent) {
+          trip.signature = trip.signature || parent.signature;
+          trip.signatureDate = trip.signatureDate || parent.signatureDate;
+          trip.printedName = trip.printedName || parent.printedName;
+          trip.relationshipToPassenger = trip.relationshipToPassenger || parent.relationshipToPassenger;
+          if (trip.consentPhoto === undefined) trip.consentPhoto = parent.consentPhoto;
+          if (trip.consentTransport === undefined) trip.consentTransport = parent.consentTransport;
+          if (trip.consentEsignature === undefined) trip.consentEsignature = parent.consentEsignature;
+          if (trip.consentHipaa === undefined) trip.consentHipaa = parent.consentHipaa;
+          if (!trip.guardianName) trip.guardianName = parent.guardianName;
+          if (!trip.guardianPhone) trip.guardianPhone = parent.guardianPhone;
+          if (!trip.guardianEmail) trip.guardianEmail = parent.guardianEmail;
+          if (!trip.caseManagerName) trip.caseManagerName = parent.caseManagerName;
+          if (!trip.caseManagerPhone) trip.caseManagerPhone = parent.caseManagerPhone;
+          if (!trip.caseManagerEmail) trip.caseManagerEmail = parent.caseManagerEmail;
+        }
+      }
+
       // Fetch child legs if this is a master request or has child legs
       const childTrips = await Trip.find({ parentRequestId: trip._id })
         .populate("driverId", "name email phone avatarUrl")
