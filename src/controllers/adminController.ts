@@ -1506,6 +1506,7 @@ export class AdminController {
 
       // Run parallel aggregations for metrics and multi-period datasets
       const [
+        todayTrips,
         totalTrips,
         totalRideRequests,
         completedTrips,
@@ -1528,6 +1529,13 @@ export class AdminController {
         recentTripsDocs,
         pendingRideRequestsDocs,
       ] = await Promise.all([
+        Trip.countDocuments({
+          ...actualTripMatch,
+          $or: [
+            { createdAt: { $gte: todayStart } },
+            { pickupDate: { $gte: todayStart, $lte: endOfToday } },
+          ],
+        }),
         Trip.countDocuments(actualTripMatch),
         Trip.countDocuments({ parentRequestId: { $exists: false } }),
         Trip.countDocuments({ ...actualTripMatch, status: "COMPLETED" }),
@@ -2097,6 +2105,7 @@ export class AdminController {
         success: true,
         data: {
           metrics: {
+            todayTrips,
             totalTrips,
             totalRideRequests,
             completedTrips,
