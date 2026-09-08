@@ -1210,6 +1210,21 @@ export class AdminController {
         .sort({ timestamp: -1 })
         .lean();
 
+      const completedChildTrips = childTrips.filter((c: any) => c.status === "COMPLETED");
+      const completedChildCount = completedChildTrips.length;
+      const isRoundTrip = trip.tripType === "round-trip" || trip.tripType === "round_trip" || (trip as any).isRoundTrip === true;
+      const completedTripsCount = childTrips.length > 0
+        ? completedChildCount
+        : (trip.status === "COMPLETED" ? (isRoundTrip ? 2 : 1) : 0);
+
+      const effectiveFare = typeof trip.fare === "number" && !isNaN(trip.fare) && trip.fare > 0
+        ? trip.fare
+        : (typeof trip.quotedFare === "number" && !isNaN(trip.quotedFare) && trip.quotedFare > 0 ? trip.quotedFare : 0);
+
+      const billableFare = childTrips.length > 0 && completedChildCount > 0
+        ? completedChildTrips.reduce((sum: number, c: any) => sum + (typeof c.fare === "number" && !isNaN(c.fare) && c.fare > 0 ? c.fare : effectiveFare), 0)
+        : completedTripsCount * effectiveFare;
+
       res.status(200).json({
         success: true,
         data: {
@@ -1217,6 +1232,8 @@ export class AdminController {
           childTrips,
           driverProfile,
           auditLogs,
+          completedTripsCount,
+          billableFare,
         },
       });
     } catch (error) {
