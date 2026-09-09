@@ -2702,7 +2702,7 @@ export class AdminController {
 
       res.status(200).json({
         success: true,
-        data: JSON.parse(setting.value),
+        data: cleanedContent,
       });
     } catch (error) {
       next(error);
