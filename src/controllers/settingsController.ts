@@ -18,17 +18,17 @@ export const settingsController = {
 
   async getCrmContent(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      let setting = await Setting.findOne({ key: "crmContent" });
-      if (!setting) {
-        // Return a default if not set
-        const defaultContent = {
-          privacyPolicy: "",
-          termsOfService: "",
-          helpCenter: "",
-        };
-        res.status(200).json({ success: true, data: defaultContent });
-        return;
-      }
+      const keys = ["privacyPolicy", "termsOfService", "helpCenter"];
+      const settings = await Setting.find({ key: { $in: keys } });
+      const data: any = {
+        privacyPolicy: "",
+        termsOfService: "",
+        helpCenter: "",
+      };
+
+      settings.forEach((s) => {
+        data[s.key] = s.value;
+      });
 
       const cleanHtml = (raw: string): string => {
         if (!raw) return "";
@@ -48,15 +48,28 @@ export const settingsController = {
         return "";
       };
 
-      const parsed = JSON.parse(setting.value);
+      // Fallback to migrate old structured data
+      const oldSetting = await Setting.findOne({ key: "crmContent" });
+      if (oldSetting) {
+        try {
+          const parsed = JSON.parse(oldSetting.value);
+          if (!data.privacyPolicy && parsed.privacyPolicy) data.privacyPolicy = normalize(parsed.privacyPolicy);
+          if (!data.termsOfService && parsed.termsOfService) data.termsOfService = normalize(parsed.termsOfService);
+          if (!data.helpCenter && parsed.helpCenter) data.helpCenter = normalize(parsed.helpCenter);
+        } catch (e) {
+          console.error("Error parsing old crmContent", e);
+        }
+      }
 
-      const normalized = {
-        privacyPolicy: normalize(parsed.privacyPolicy),
-        termsOfService: normalize(parsed.termsOfService),
-        helpCenter: normalize(parsed.helpCenter),
-      };
-
-      res.status(200).json({ success: true, data: normalized });
+      // Ensure data is cleaned/normalized even if from new keys
+      res.status(200).json({
+        success: true,
+        data: {
+          privacyPolicy: normalize(data.privacyPolicy),
+          termsOfService: normalize(data.termsOfService),
+          helpCenter: normalize(data.helpCenter),
+        },
+      });
     } catch (error) {
       next(error);
     }

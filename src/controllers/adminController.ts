@@ -2690,11 +2690,15 @@ export class AdminController {
 
       const cleanedContent = cleanHtml(crmContent);
 
-      const setting = await Setting.findOneAndUpdate(
-        { key: "crmContent" },
-        { value: JSON.stringify(cleanedContent) },
-        { new: true, upsert: true }
-      );
+      for (const key of ["privacyPolicy", "termsOfService", "helpCenter"]) {
+        if (cleanedContent[key] !== undefined) {
+          await Setting.findOneAndUpdate(
+            { key },
+            { value: cleanedContent[key] }, // Save as a flat string
+            { new: true, upsert: true }
+          );
+        }
+      }
 
       res.status(200).json({
         success: true,
