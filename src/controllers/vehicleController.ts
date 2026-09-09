@@ -8,6 +8,7 @@ const createVehicleSchema = z.object({
   vin: z.string().length(17, "VIN must contain 17 characters"),
   year: z.number().min(1900).max(2100),
   plateExpirationDate: z.string().min(1, "Plate expiration date is required"),
+  imageUrl: z.string().optional(),
 });
 
 export class VehicleController {
@@ -52,7 +53,7 @@ export class VehicleController {
         return;
       }
 
-      const { modelName, licensePlate, vin, year, plateExpirationDate } = parsed.data;
+      const { modelName, licensePlate, vin, year, plateExpirationDate, imageUrl } = parsed.data;
 
       // Auto-generate fleet ID
       const fleetId = `#${Math.floor(100 + Math.random() * 900)}`;
@@ -63,6 +64,7 @@ export class VehicleController {
         vin,
         year,
         plateExpirationDate,
+        imageUrl,
         fleetId,
         status: "Active",
       });

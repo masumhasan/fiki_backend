@@ -9,6 +9,7 @@ export interface IVehicle extends Document {
   status: "Active" | "Inactive" | "Maintenance";
   assignedDriverId?: Schema.Types.ObjectId;
   plateExpirationDate?: string;
+  imageUrl?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -27,6 +28,7 @@ const vehicleSchema = new Schema<IVehicle>(
     },
     assignedDriverId: { type: Schema.Types.ObjectId, ref: "Driver" },
     plateExpirationDate: { type: String },
+    imageUrl: { type: String },
   },
   { timestamps: true }
 );
