@@ -172,6 +172,44 @@ export class TripController {
     }
   }
 
+  async getTripById(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ success: false, error: { code: "UNAUTHENTICATED", message: "Not authenticated" } });
+        return;
+      }
+
+      const trip = await Trip.findOne({
+        _id: req.params.id,
+        passengerId: req.user.userId,
+      })
+        .populate("driverId", "name email phone avatarUrl")
+        .populate("passengerId", "fullName email phone")
+        .lean();
+
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      // Fetch child trips if this is a parent request
+      const childTrips = await Trip.find({ parentRequestId: trip._id })
+        .populate("driverId", "name email phone avatarUrl")
+        .sort({ pickupDate: 1, pickupTime: 1 })
+        .lean();
+
+      res.status(200).json({
+        success: true,
+        data: {
+          ...trip,
+          childTrips,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async cancelTrip(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user) {
