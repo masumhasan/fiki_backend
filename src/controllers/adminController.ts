@@ -95,7 +95,7 @@ const createTripSchema = z.object({
 });
 
 const assignDriverSchema = z.object({
-  driverId: z.string().min(1, "Driver ID is required"),
+  driverId: z.string().nullable().optional(),
 });
 
 const sendQuoteSchema = z.object({
@@ -779,44 +779,43 @@ export class AdminController {
         return;
       }
 
-      if (trip.status !== "ACCEPTED") {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: "RIDE_NOT_APPROVED",
-            message: "Cannot assign driver before approving the ride request. Please approve the request first.",
-          },
-        });
-        return;
-      }
-
-      const driver = await User.findOne({ _id: parsed.data.driverId, role: "DRIVER", accountStatus: "ACTIVE" });
-      if (!driver) {
-        res.status(400).json({ success: false, error: { code: "INVALID_DRIVER", message: "Driver not found or not active" } });
-        return;
-      }
-
-      trip.driverId = driver._id;
-      trip.status = "ACCEPTED";
+      const rawDriverId = parsed.data.driverId?.trim();
       const now = new Date();
-      if (!trip.assignedAt) trip.assignedAt = now;
-      if (!trip.acceptedAt) trip.acceptedAt = now;
-      await trip.save();
 
-      await Trip.updateMany(
-        { parentRequestId: trip._id },
-        { driverId: driver._id, status: "ACCEPTED", assignedAt: now, acceptedAt: now }
-      );
+      if (rawDriverId) {
+        const driver = await User.findOne({ _id: rawDriverId, role: "DRIVER", accountStatus: "ACTIVE" });
+        if (!driver) {
+          res.status(400).json({ success: false, error: { code: "INVALID_DRIVER", message: "Driver not found or not active" } });
+          return;
+        }
 
-      const existingChildCount = await Trip.countDocuments({ parentRequestId: trip._id });
-      if (existingChildCount === 0) {
-        await generateRecurringTripsForMaster(trip);
+        trip.driverId = driver._id;
+        if (!trip.assignedAt) trip.assignedAt = now;
+        if (trip.status === "REQUESTED" || trip.status === "QUOTE_ACCEPTED") {
+          trip.status = "ACCEPTED";
+          if (!trip.acceptedAt) trip.acceptedAt = now;
+        }
+        await trip.save();
+
+        await DriverProfile.findOneAndUpdate(
+          { userId: driver._id },
+          { availabilityStatus: "ASSIGNED" }
+        );
+      } else {
+        // Unassign driver from this trip
+        trip.driverId = undefined;
+        await trip.save();
       }
 
-      await DriverProfile.findOneAndUpdate(
-        { userId: driver._id },
-        { availabilityStatus: "ASSIGNED" }
-      );
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_ASSIGNED_DRIVER",
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        details: { driverId: rawDriverId || null, tripId: trip._id },
+        requestId: req.requestId,
+      });
 
       const populatedTrip = await Trip.findById(trip._id)
         .populate("passengerId", "name email phone avatarUrl")
