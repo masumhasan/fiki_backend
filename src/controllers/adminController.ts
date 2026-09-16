@@ -617,7 +617,10 @@ export class AdminController {
       const getTabFilter = (tabName: string): Record<string, unknown> => {
         const f: Record<string, unknown> = { ...baseFilter };
         if (tabName === "completed") {
-          f.status = "COMPLETED";
+          f.$or = [
+            { status: "COMPLETED" },
+            { status: "CANCELLED", cancellationReason: { $in: ["No Show Up", "NO_SHOW"] } },
+          ];
         } else if (tabName === "missed") {
           f.$or = [
             { status: "MISSED" },
@@ -678,7 +681,10 @@ export class AdminController {
 
       if (status) {
         const statusStr = status as string;
-        if (statusStr.includes(",")) {
+        if (statusStr === "NO_SHOW") {
+          filter.status = "CANCELLED";
+          filter.cancellationReason = { $in: ["No Show Up", "NO_SHOW"] };
+        } else if (statusStr.includes(",")) {
           filter.status = { $in: statusStr.split(",") };
         } else {
           filter.status = statusStr;

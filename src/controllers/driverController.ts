@@ -756,7 +756,10 @@ export class DriverController {
       const getTabFilter = (tabName: string) => {
         const f = { ...baseFilter };
         if (tabName === "completed") {
-          f.status = "COMPLETED";
+          f.$or = [
+            { status: "COMPLETED" },
+            { status: "CANCELLED", cancellationReason: { $in: ["No Show Up", "NO_SHOW"] } },
+          ];
         } else if (tabName === "missed") {
           f.$or = [
             { status: "MISSED" },
@@ -884,7 +887,7 @@ export class DriverController {
       }
 
       const id = req.params.id as string;
-      const { status, receiverSignature, receiverName, receiverRelationship } = req.body;
+      const { status, cancellationReason, driverNotes, receiverSignature, receiverName, receiverRelationship } = req.body;
 
       const validStatuses: TripStatus[] = ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS", "COMPLETED", "CANCELLED"];
       if (!status || !validStatuses.includes(status)) {
@@ -984,6 +987,16 @@ export class DriverController {
         if (receiverSignature && !trip.receiverSignedAt) trip.receiverSignedAt = statusNow;
       } else if (status === "CANCELLED") {
         if (!trip.cancelledAt) trip.cancelledAt = statusNow;
+        if (cancellationReason) {
+          trip.cancellationReason = cancellationReason;
+        }
+        if (driverNotes) {
+          trip.driverShiftNotes = driverNotes;
+        }
+        // For No Show Up trips, passenger is not charged for this specific trip
+        if (cancellationReason === "No Show Up" || cancellationReason === "NO_SHOW") {
+          trip.fare = 0;
+        }
       }
 
       await trip.save();
@@ -993,21 +1006,26 @@ export class DriverController {
         const updateObj: Record<string, unknown> = { availabilityStatus: "ONLINE" };
         if (status === "COMPLETED") {
           updateObj.$inc = { completedTripsCount: 1 };
+        }
 
-          // If this is a child leg, check if all sibling legs under the parent request are completed
-          if (trip.parentRequestId) {
-            const remainingIncomplete = await Trip.countDocuments({
+        // If this is a child leg, check if all sibling legs under the parent request are completed or cancelled
+        if (trip.parentRequestId) {
+          const remainingIncomplete = await Trip.countDocuments({
+            parentRequestId: trip.parentRequestId,
+            status: { $nin: ["COMPLETED", "CANCELLED"] },
+          });
+          if (remainingIncomplete === 0) {
+            const completedCount = await Trip.countDocuments({
               parentRequestId: trip.parentRequestId,
-              status: { $nin: ["COMPLETED", "CANCELLED"] },
+              status: "COMPLETED",
             });
-            if (remainingIncomplete === 0) {
-              await Trip.findByIdAndUpdate(trip.parentRequestId, {
-                status: "COMPLETED",
-                completedAt: statusNow,
-              });
-            }
+            await Trip.findByIdAndUpdate(trip.parentRequestId, {
+              status: completedCount > 0 ? "COMPLETED" : "CANCELLED",
+              completedAt: statusNow,
+            });
           }
         }
+
         await DriverProfile.findOneAndUpdate({ userId: req.user.userId }, updateObj);
       }
 
