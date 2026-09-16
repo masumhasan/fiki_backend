@@ -5,7 +5,7 @@ import { authenticate } from "../middleware/authMiddleware.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit
+  limits: { fileSize: 35 * 1024 * 1024 }, // 35MB limit
 });
 
 const handleMulterUpload = (req: any, res: any, next: any) => {

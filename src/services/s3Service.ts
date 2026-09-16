@@ -31,17 +31,23 @@ export const s3Client = new Proxy({} as S3Client, {
 });
 
 function sanitizeExtension(originalName: string, mimeType: string): string {
+  const normMime = (mimeType || "").toLowerCase();
+  if (normMime.includes("webp")) return "webp";
+  if (normMime.includes("png")) return "png";
+  if (normMime.includes("gif")) return "gif";
+  if (normMime.includes("jpeg") || normMime.includes("jpg")) return "jpg";
+  if (normMime.includes("heic")) return "heic";
+  if (normMime.includes("heif")) return "heif";
+
   let ext = "";
   if (originalName && originalName.includes(".")) {
     ext = originalName.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") || "";
   }
-  if (!ext || ext.length > 5) {
-    if (mimeType.includes("png")) ext = "png";
-    else if (mimeType.includes("webp")) ext = "webp";
-    else if (mimeType.includes("gif")) ext = "gif";
-    else ext = "jpg";
+  if (ext === "jpeg") return "jpg";
+  if (["jpg", "png", "webp", "gif", "heic", "heif", "pdf"].includes(ext)) {
+    return ext;
   }
-  return ext;
+  return "jpg";
 }
 
 export function generateStructuredS3Key(
