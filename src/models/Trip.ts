@@ -34,6 +34,14 @@ export interface ITrip extends Document {
   quotedFare?: number;
   quotedAt?: Date;
   quoteNote?: string;
+  quoteBreakdown?: {
+    baseFare?: number;
+    distance?: number;
+    ratePerMile?: number;
+    extraServices?: number;
+    discount?: number;
+    taxPercent?: number;
+  };
   counterOffer?: number;
   counterOfferedAt?: Date;
   counterOfferNote?: string;
@@ -175,6 +183,14 @@ const tripSchema = new Schema<ITrip>(
     quotedFare: { type: Number },
     quotedAt: { type: Date },
     quoteNote: { type: String },
+    quoteBreakdown: {
+      baseFare: { type: Number },
+      distance: { type: Number },
+      ratePerMile: { type: Number },
+      extraServices: { type: Number },
+      discount: { type: Number },
+      taxPercent: { type: Number },
+    },
     counterOffer: { type: Number },
     counterOfferedAt: { type: Date },
     counterOfferNote: { type: String },

@@ -101,6 +101,16 @@ const assignDriverSchema = z.object({
 const sendQuoteSchema = z.object({
   quotedFare: z.number().positive("Quoted fare must be a positive number"),
   quoteNote: z.string().max(500).optional(),
+  quoteBreakdown: z
+    .object({
+      baseFare: z.number().optional(),
+      distance: z.number().optional(),
+      ratePerMile: z.number().optional(),
+      extraServices: z.number().optional(),
+      discount: z.number().optional(),
+      taxPercent: z.number().optional(),
+    })
+    .optional(),
 });
 
 const respondToCounterOfferSchema = z.object({
@@ -1243,7 +1253,7 @@ export class AdminController {
         : (typeof trip.quotedFare === "number" && !isNaN(trip.quotedFare) && trip.quotedFare > 0 ? trip.quotedFare : 0);
 
       const billableFare = childTrips.length > 0 && completedChildCount > 0
-        ? completedChildTrips.reduce((sum: number, c: any) => sum + (typeof c.fare === "number" && !isNaN(c.fare) && c.fare > 0 ? c.fare : effectiveFare), 0)
+        ? completedChildTrips.reduce((sum: number, c: any) => sum + (typeof c.fare === "number" && !isNaN(c.fare) && c.fare > 0 ? c.fare : (typeof c.quotedFare === "number" && !isNaN(c.quotedFare) && c.quotedFare > 0 ? c.quotedFare : effectiveFare)), 0)
         : completedTripsCount * effectiveFare;
 
       res.status(200).json({
@@ -1361,55 +1371,127 @@ export class AdminController {
         return;
       }
 
-      const allowedStatuses: string[] = ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT", "ACCEPTED"];
-      if (!allowedStatuses.includes(trip.status)) {
+      // Determine the master trip ID (if this is a child leg, resolve the parent)
+      const masterId = trip.parentRequestId ? trip.parentRequestId : trip._id;
+      const masterTrip = trip.parentRequestId ? await Trip.findById(masterId) : trip;
+
+      if (!masterTrip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Master trip not found" } });
+        return;
+      }
+
+      // Prohibit quote updates only if the master request is completely cancelled
+      if (masterTrip.status === "CANCELLED") {
         res.status(409).json({
           success: false,
-          error: { code: "INVALID_TRIP_STATE", message: `Cannot send a quote when trip status is '${trip.status}'` },
+          error: { code: "INVALID_TRIP_STATE", message: "Cannot send or update a quote for a cancelled ride request" },
         });
         return;
       }
 
-      const previousStatus = trip.status;
-      trip.quotedFare = parsed.data.quotedFare;
-      trip.quotedAt = new Date();
-      trip.quoteNote = parsed.data.quoteNote;
-      if (trip.status === "REQUESTED" || trip.status === "QUOTE_COUNTERED") {
-        trip.status = "QUOTE_SENT";
-      }
-      await trip.save();
+      const previousStatus = masterTrip.status;
+      const previousQuotedFare = masterTrip.quotedFare;
 
-      // Sync quotedFare and quoteNote to child legs if this is a master request
-      if (!trip.parentRequestId) {
-        await Trip.updateMany(
-          { parentRequestId: trip._id },
+      // Find all child trips under this master request
+      const childTrips = await Trip.find({ parentRequestId: masterId }).select("_id status quotedFare fare");
+      const totalChildTrips = childTrips.length;
+      const completedCount = childTrips.filter((c) => c.status === "COMPLETED").length;
+
+      // If it's a standalone single trip (no child trips) and it's already completed
+      if (totalChildTrips === 0 && masterTrip.status === "COMPLETED") {
+        res.status(409).json({
+          success: false,
+          error: {
+            code: "TRIP_ALREADY_COMPLETED",
+            message: "Cannot update quotation because this single trip has already been completed",
+          },
+        });
+        return;
+      }
+
+      // Update the master trip's quote information
+      masterTrip.quotedFare = parsed.data.quotedFare;
+      masterTrip.quotedAt = new Date();
+      if (parsed.data.quoteNote !== undefined) {
+        masterTrip.quoteNote = parsed.data.quoteNote;
+      }
+      if (parsed.data.quoteBreakdown !== undefined) {
+        masterTrip.quoteBreakdown = parsed.data.quoteBreakdown;
+      }
+
+      // Only transition to QUOTE_SENT if previous state was initial negotiation
+      if (masterTrip.status === "REQUESTED" || masterTrip.status === "QUOTE_COUNTERED") {
+        masterTrip.status = "QUOTE_SENT";
+      }
+
+      // If master trip was already accepted and has no child trips, sync fare too
+      if (totalChildTrips === 0 && (masterTrip.status === "ACCEPTED" || masterTrip.status === "QUOTE_ACCEPTED")) {
+        masterTrip.fare = parsed.data.quotedFare;
+      }
+
+      await masterTrip.save();
+
+      // Update future child legs ONLY (exclude COMPLETED and CANCELLED trips)
+      let updatedFutureCount = 0;
+      if (totalChildTrips > 0) {
+        const childUpdateDoc: any = {
+          quotedFare: parsed.data.quotedFare,
+          quotedAt: new Date(),
+        };
+        if (parsed.data.quoteNote !== undefined) {
+          childUpdateDoc.quoteNote = parsed.data.quoteNote;
+        }
+        if (parsed.data.quoteBreakdown !== undefined) {
+          childUpdateDoc.quoteBreakdown = parsed.data.quoteBreakdown;
+        }
+        // If master trip is QUOTE_SENT, propagate QUOTE_SENT to future legs
+        if (masterTrip.status === "QUOTE_SENT") {
+          childUpdateDoc.status = "QUOTE_SENT";
+        }
+        // If master trip is already operational (e.g. ACCEPTED, QUOTE_ACCEPTED, IN_PROGRESS),
+        // sync the active fare for future trips so billing and driver assignment reflect the new quote
+        if (["ACCEPTED", "QUOTE_ACCEPTED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED"].includes(masterTrip.status)) {
+          childUpdateDoc.fare = parsed.data.quotedFare;
+        }
+
+        const updateResult = await Trip.updateMany(
           {
-            quotedFare: trip.quotedFare,
-            quoteNote: trip.quoteNote,
-            ...(trip.status === "QUOTE_SENT" ? { status: "QUOTE_SENT" } : {}),
-          }
+            parentRequestId: masterId,
+            status: { $nin: ["COMPLETED", "CANCELLED"] },
+          },
+          { $set: childUpdateDoc }
         );
+        updatedFutureCount = updateResult.modifiedCount;
       }
 
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
         actorRole: req.user!.role,
-        action: "ADMIN_SENT_QUOTE",
+        action: previousQuotedFare ? "ADMIN_UPDATED_QUOTE" : "ADMIN_SENT_QUOTE",
         resourceType: "Trip",
-        resourceId: trip._id.toString(),
-        previousState: { status: previousStatus },
-        newState: { status: trip.status, quotedFare: trip.quotedFare },
+        resourceId: masterTrip._id.toString(),
+        previousState: { status: previousStatus, quotedFare: previousQuotedFare },
+        newState: {
+          status: masterTrip.status,
+          quotedFare: masterTrip.quotedFare,
+          updatedFutureTrips: updatedFutureCount,
+          completedTripsRetained: completedCount,
+        },
         requestId: req.requestId,
       });
 
       res.status(200).json({
         success: true,
         data: {
-          id: trip._id.toString(),
-          status: trip.status,
-          quotedFare: trip.quotedFare,
-          quotedAt: trip.quotedAt,
-          quoteNote: trip.quoteNote,
+          id: masterTrip._id.toString(),
+          status: masterTrip.status,
+          quotedFare: masterTrip.quotedFare,
+          quotedAt: masterTrip.quotedAt,
+          quoteNote: masterTrip.quoteNote,
+          quoteBreakdown: masterTrip.quoteBreakdown,
+          updatedFutureTripsCount: updatedFutureCount,
+          completedTripsCount: completedCount,
+          totalChildTrips,
         },
       });
     } catch (error) {
