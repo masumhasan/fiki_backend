@@ -12,7 +12,7 @@ import { Vehicle } from "../models/Vehicle.js";
 import bcrypt from "bcryptjs";
 import { getFortnightlyPeriods } from "./driverController.js";
 import { generateRecurringTripsForMaster } from "../utils/recurringTripUtils.js";
-import { parseCentralDateTime, calculateShiftDuration, getCentralTodayStr, getCentralTomorrowStr } from "../utils/dateUtils.js";
+import { parseCentralDateTime, calculateShiftDuration, getCentralTodayStr, getCentralTomorrowStr, getCentralDayBounds } from "../utils/dateUtils.js";
 
 const updateDriverStatusSchema = z.object({
   approvalStatus: z.enum(["APPROVED", "REJECTED"]).optional(),
@@ -1712,9 +1712,108 @@ export class AdminController {
 
       const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+      const todayStr = getCentralTodayStr(now);
+      const todayBounds = getCentralDayBounds(todayStr, now);
+
+      // Past 7 days
+      const weekStartStr = getCentralTodayStr(weekDays[0]);
+      const weekBounds = getCentralDayBounds(weekStartStr, now);
+
+      // Past 14 days
+      const fortnightStartStr = getCentralTodayStr(fortnightDays[0]);
+      const fortnightBounds = getCentralDayBounds(fortnightStartStr, now);
+
+      // Current month bounds
+      const monthStartStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const monthEndStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(lastDayOfMonth).padStart(2, "0")}`;
+
+      // Current year bounds
+      const yearStartStr = `${now.getFullYear()}-01-01`;
+      const yearEndStr = `${now.getFullYear()}-12-31`;
+
+      const buildTripPeriodFilter = (startStr: string, endStr: string, startUtc: Date, endUtc: Date) => ({
+        ...actualTripMatch,
+        $or: [
+          { pickupDate: { $gte: startStr, $lte: endStr } },
+          {
+            $and: [
+              { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+              { startDate: { $gte: startStr, $lte: endStr } },
+            ],
+          },
+          {
+            $and: [
+              { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+              { $or: [{ startDate: { $exists: false } }, { startDate: null }, { startDate: "" }] },
+              { createdAt: { $gte: startUtc, $lte: endUtc } },
+            ],
+          },
+        ],
+      });
+
+      const buildCompletedPeriodFilter = (startStr: string, endStr: string, startUtc: Date, endUtc: Date) => ({
+        ...actualTripMatch,
+        status: "COMPLETED",
+        $or: [
+          { pickupDate: { $gte: startStr, $lte: endStr } },
+          {
+            $and: [
+              { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+              { startDate: { $gte: startStr, $lte: endStr } },
+            ],
+          },
+          { completedAt: { $gte: startUtc, $lte: endUtc } },
+          {
+            $and: [
+              { $or: [{ completedAt: { $exists: false } }, { completedAt: null }] },
+              { updatedAt: { $gte: startUtc, $lte: endUtc } },
+            ],
+          },
+        ],
+      });
+
+      const buildPendingPeriodFilter = (startStr: string, endStr: string, startUtc: Date, endUtc: Date) => ({
+        parentRequestId: { $exists: false },
+        status: { $in: ["REQUESTED", "QUOTE_COUNTERED", "QUOTE_SENT"] },
+        $or: [
+          { pickupDate: { $gte: startStr, $lte: endStr } },
+          {
+            $and: [
+              { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+              { startDate: { $gte: startStr, $lte: endStr } },
+            ],
+          },
+          { createdAt: { $gte: startUtc, $lte: endUtc } },
+        ],
+      });
+
       // Run parallel aggregations for metrics and multi-period datasets
       const [
-        todayTrips,
+        todayTripsCount,
+        weekTripsCount,
+        fortnightTripsCount,
+        monthTripsCount,
+        yearTripsCount,
+
+        todayCompletedCount,
+        weekCompletedCount,
+        fortnightCompletedCount,
+        monthCompletedCount,
+        yearCompletedCount,
+
+        todayPendingCount,
+        weekPendingCount,
+        fortnightPendingCount,
+        monthPendingCount,
+        yearPendingCount,
+
+        todayDriversWithTrips,
+        weekDriversWithTrips,
+        fortnightDriversWithTrips,
+        monthDriversWithTrips,
+        yearDriversWithTrips,
+
         totalTrips,
         totalRideRequests,
         completedTrips,
@@ -1737,13 +1836,30 @@ export class AdminController {
         recentTripsDocs,
         pendingRideRequestsDocs,
       ] = await Promise.all([
-        Trip.countDocuments({
-          ...actualTripMatch,
-          $or: [
-            { createdAt: { $gte: todayStart } },
-            { pickupDate: { $gte: todayStart, $lte: endOfToday } },
-          ],
-        }),
+        Trip.countDocuments(buildTripPeriodFilter(todayStr, todayStr, todayBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildTripPeriodFilter(weekStartStr, todayStr, weekBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildTripPeriodFilter(fortnightStartStr, todayStr, fortnightBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildTripPeriodFilter(monthStartStr, monthEndStr, startOfMonth, endOfMonth)),
+        Trip.countDocuments(buildTripPeriodFilter(yearStartStr, yearEndStr, startOfYear, endOfYear)),
+
+        Trip.countDocuments(buildCompletedPeriodFilter(todayStr, todayStr, todayBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildCompletedPeriodFilter(weekStartStr, todayStr, weekBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildCompletedPeriodFilter(fortnightStartStr, todayStr, fortnightBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildCompletedPeriodFilter(monthStartStr, monthEndStr, startOfMonth, endOfMonth)),
+        Trip.countDocuments(buildCompletedPeriodFilter(yearStartStr, yearEndStr, startOfYear, endOfYear)),
+
+        Trip.countDocuments(buildPendingPeriodFilter(todayStr, todayStr, todayBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildPendingPeriodFilter(weekStartStr, todayStr, weekBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildPendingPeriodFilter(fortnightStartStr, todayStr, fortnightBounds.start, todayBounds.end)),
+        Trip.countDocuments(buildPendingPeriodFilter(monthStartStr, monthEndStr, startOfMonth, endOfMonth)),
+        Trip.countDocuments(buildPendingPeriodFilter(yearStartStr, yearEndStr, startOfYear, endOfYear)),
+
+        Trip.distinct("driverId", { ...buildTripPeriodFilter(todayStr, todayStr, todayBounds.start, todayBounds.end), driverId: { $ne: null } }),
+        Trip.distinct("driverId", { ...buildTripPeriodFilter(weekStartStr, todayStr, weekBounds.start, todayBounds.end), driverId: { $ne: null } }),
+        Trip.distinct("driverId", { ...buildTripPeriodFilter(fortnightStartStr, todayStr, fortnightBounds.start, todayBounds.end), driverId: { $ne: null } }),
+        Trip.distinct("driverId", { ...buildTripPeriodFilter(monthStartStr, monthEndStr, startOfMonth, endOfMonth), driverId: { $ne: null } }),
+        Trip.distinct("driverId", { ...buildTripPeriodFilter(yearStartStr, yearEndStr, startOfYear, endOfYear), driverId: { $ne: null } }),
+
         Trip.countDocuments(actualTripMatch),
         Trip.countDocuments({ parentRequestId: { $exists: false } }),
         Trip.countDocuments({ ...actualTripMatch, status: "COMPLETED" }),
@@ -1757,6 +1873,7 @@ export class AdminController {
           ...actualTripMatch,
           status: { $in: ["ACCEPTED", "QUOTE_ACCEPTED", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
         }),
+
         Trip.aggregate([
           { $match: { ...actualTripMatch, status: "COMPLETED" } },
           {
@@ -2309,11 +2426,49 @@ export class AdminController {
         year: yearRidePerf,
       };
 
+      const periodMetrics = {
+        today: {
+          totalTrips: todayTripsCount,
+          completedTrips: todayCompletedCount,
+          pendingRequests: todayPendingCount,
+          activeDrivers: Math.max(activeDriversCount, todayDriversWithTrips.length),
+          dateRangeLabel: "Today",
+        },
+        week: {
+          totalTrips: weekTripsCount,
+          completedTrips: weekCompletedCount,
+          pendingRequests: weekPendingCount,
+          activeDrivers: Math.max(activeDriversCount, weekDriversWithTrips.length),
+          dateRangeLabel: "Past 7 Days",
+        },
+        fortnight: {
+          totalTrips: fortnightTripsCount,
+          completedTrips: fortnightCompletedCount,
+          pendingRequests: fortnightPendingCount,
+          activeDrivers: Math.max(activeDriversCount, fortnightDriversWithTrips.length),
+          dateRangeLabel: "Past 14 Days",
+        },
+        month: {
+          totalTrips: monthTripsCount,
+          completedTrips: monthCompletedCount,
+          pendingRequests: monthPendingCount,
+          activeDrivers: Math.max(activeDriversCount, monthDriversWithTrips.length),
+          dateRangeLabel: "This Month",
+        },
+        year: {
+          totalTrips: yearTripsCount,
+          completedTrips: yearCompletedCount,
+          pendingRequests: yearPendingCount,
+          activeDrivers: Math.max(activeDriversCount, yearDriversWithTrips.length),
+          dateRangeLabel: "This Year",
+        },
+      };
+
       res.status(200).json({
         success: true,
         data: {
           metrics: {
-            todayTrips,
+            todayTrips: todayTripsCount,
             totalTrips,
             totalRideRequests,
             completedTrips,
@@ -2329,8 +2484,11 @@ export class AdminController {
             newPassengersThisWeek,
             totalRevenue,
             outstandingPayments: 0,
+            periodMetrics,
           },
+          periodMetrics,
           revenueSummary: {
+
             todayRevenue,
             weeklyRevenue,
             fortnightRevenue,
