@@ -8,6 +8,7 @@ import { DriverApplication } from "../models/DriverApplication.js";
 import { Trip } from "../models/Trip.js";
 import { User } from "../models/User.js";
 import { Setting } from "../models/Setting.js";
+import { Vehicle } from "../models/Vehicle.js";
 import bcrypt from "bcryptjs";
 import { getFortnightlyPeriods } from "./driverController.js";
 import { generateRecurringTripsForMaster } from "../utils/recurringTripUtils.js";
@@ -154,6 +155,30 @@ async function syncDriverProfileWithApplication(user: any, profileDoc?: any) {
 
     if (profile.isNew || modified) {
       await profile.save();
+    }
+  }
+
+  // Ensure vehicle is synced if missing on profile but assigned in Vehicle collection
+  if (!profile.vehicle?.licensePlate || !profile.vehicleId) {
+    const assignedVehicle = await Vehicle.findOne({ assignedDriverId: user._id });
+    if (assignedVehicle) {
+      profile.vehicle = {
+        model: assignedVehicle.modelName,
+        year: assignedVehicle.year,
+        licensePlate: assignedVehicle.licensePlate,
+      };
+      profile.vehicleId = assignedVehicle._id as any;
+      await profile.save();
+    } else if (profile.vehicleId && !profile.vehicle?.licensePlate) {
+      const v = await Vehicle.findById(profile.vehicleId);
+      if (v) {
+        profile.vehicle = {
+          model: v.modelName,
+          year: v.year,
+          licensePlate: v.licensePlate,
+        };
+        await profile.save();
+      }
     }
   }
 
@@ -329,6 +354,7 @@ export class AdminController {
                 licenseNumber: profile.licenseNumber || null,
                 licenseExpirationDate: profile.licenseExpirationDate || null,
                 vehicle: profile.vehicle || null,
+                vehicleId: profile.vehicleId ? profile.vehicleId.toString() : null,
                 approvalStatus: profile.approvalStatus,
                 availabilityStatus: profile.availabilityStatus,
                 completedTripsCount: profile.completedTripsCount,
@@ -402,6 +428,7 @@ export class AdminController {
                   approvalStatus: p.approvalStatus,
                   availabilityStatus: p.availabilityStatus,
                   vehicle: p.vehicle,
+                  vehicleId: p.vehicleId ? p.vehicleId.toString() : null,
                   licenseNumber: p.licenseNumber || null,
                   licenseExpirationDate: p.licenseExpirationDate || null,
                   completedTripsCount: p.completedTripsCount,
@@ -2292,7 +2319,7 @@ export class AdminController {
         return;
       }
 
-      const { name, phone, email, licenseNumber, licenseExpirationDate } = req.body;
+      const { name, phone, email, licenseNumber, licenseExpirationDate, vehicleId, avatarUrl } = req.body;
 
       const driverUser = await User.findOne({ _id: id, role: "DRIVER" });
       if (!driverUser) {
@@ -2304,6 +2331,7 @@ export class AdminController {
       if (name !== undefined) driverUser.name = name;
       if (phone !== undefined) driverUser.phone = phone;
       if (email !== undefined) driverUser.email = email.toLowerCase();
+      if (avatarUrl !== undefined) driverUser.avatarUrl = avatarUrl;
       await driverUser.save();
 
       // Update or create DriverProfile
@@ -2318,6 +2346,40 @@ export class AdminController {
 
       if (licenseNumber !== undefined) profile.licenseNumber = licenseNumber;
       if (licenseExpirationDate !== undefined) profile.licenseExpirationDate = licenseExpirationDate;
+      if (avatarUrl !== undefined) profile.avatarUrl = driverUser.avatarUrl || avatarUrl;
+
+      // Handle vehicle assignment
+      if (vehicleId !== undefined) {
+        if (vehicleId && vehicleId !== "none" && mongoose.Types.ObjectId.isValid(vehicleId)) {
+          const selectedVehicle = await Vehicle.findById(vehicleId);
+          if (selectedVehicle) {
+            // Unassign other vehicles previously assigned to this driver
+            await Vehicle.updateMany(
+              { assignedDriverId: driverUser._id, _id: { $ne: selectedVehicle._id } },
+              { $unset: { assignedDriverId: 1 } }
+            );
+
+            // Assign this vehicle to driver
+            selectedVehicle.assignedDriverId = driverUser._id as any;
+            await selectedVehicle.save();
+
+            profile.vehicleId = selectedVehicle._id as any;
+            profile.vehicle = {
+              model: selectedVehicle.modelName,
+              year: selectedVehicle.year,
+              licensePlate: selectedVehicle.licensePlate,
+            };
+          }
+        } else if (!vehicleId || vehicleId === "none") {
+          profile.vehicleId = undefined;
+          profile.vehicle = undefined;
+          await Vehicle.updateMany(
+            { assignedDriverId: driverUser._id },
+            { $unset: { assignedDriverId: 1 } }
+          );
+        }
+      }
+
       await profile.save();
 
       res.status(200).json({
@@ -2328,11 +2390,15 @@ export class AdminController {
           name: driverUser.name,
           phone: driverUser.phone,
           email: driverUser.email,
+          avatarUrl: driverUser.avatarUrl || profile.avatarUrl || "",
           profile: {
             licenseNumber: profile.licenseNumber,
             licenseExpirationDate: profile.licenseExpirationDate,
             approvalStatus: profile.approvalStatus,
             availabilityStatus: profile.availabilityStatus,
+            avatarUrl: profile.avatarUrl || driverUser.avatarUrl || "",
+            vehicle: profile.vehicle || null,
+            vehicleId: profile.vehicleId ? profile.vehicleId.toString() : null,
           }
         }
       });

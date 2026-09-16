@@ -24,6 +24,7 @@ export interface IDriverProfile extends Document {
   licenseNumber?: string;
   licenseExpirationDate?: string;
   avatarUrl?: string;
+  vehicleId?: mongoose.Types.ObjectId;
   vehicle?: {
     make?: string;
     model?: string;
@@ -83,6 +84,7 @@ const driverProfileSchema = new Schema<IDriverProfile>(
     licenseNumber: { type: String, trim: true },
     licenseExpirationDate: { type: String, trim: true },
     avatarUrl: { type: String, trim: true },
+    vehicleId: { type: Schema.Types.ObjectId, ref: "Vehicle" },
     vehicle: {
       make: { type: String, trim: true },
       model: { type: String, trim: true },
