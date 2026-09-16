@@ -412,9 +412,62 @@ export class AdminController {
       const driverUsers = await User.find(userFilter).skip(skip).limit(limit).lean();
       const totalDrivers = await User.countDocuments(userFilter);
 
+      // Current fortnightly period for calculating actual completed trips
+      const currentFortnight = getFortnightlyPeriods()[0];
+      const fnStart = new Date(`${currentFortnight.startDate}T00:00:00.000Z`);
+      const fnEnd = new Date(`${currentFortnight.endDate}T23:59:59.999Z`);
+      const driverIds = driverUsers.map((u) => u._id);
+
+      const [fortnightCompletedAgg, totalCompletedAgg] = await Promise.all([
+        Trip.aggregate([
+          {
+            $match: {
+              driverId: { $in: driverIds },
+              status: "COMPLETED",
+              createdAt: { $gte: fnStart, $lte: fnEnd },
+            },
+          },
+          {
+            $group: {
+              _id: "$driverId",
+              count: { $sum: 1 },
+            },
+          },
+        ]),
+        Trip.aggregate([
+          {
+            $match: {
+              driverId: { $in: driverIds },
+              status: "COMPLETED",
+            },
+          },
+          {
+            $group: {
+              _id: "$driverId",
+              count: { $sum: 1 },
+            },
+          },
+        ]),
+      ]);
+
+      const fnCountMap = new Map<string, number>(
+        fortnightCompletedAgg.map((item: any) => [item._id.toString(), item.count])
+      );
+      const totalCountMap = new Map<string, number>(
+        totalCompletedAgg.map((item: any) => [item._id.toString(), item.count])
+      );
+
       const drivers = await Promise.all(
         driverUsers.map(async (u) => {
           const p = await syncDriverProfileWithApplication(u);
+          const fnTrips = fnCountMap.get(u._id.toString()) || 0;
+          const totalTrips = totalCountMap.get(u._id.toString()) || 0;
+
+          if (p && p.completedTripsCount !== totalTrips) {
+            p.completedTripsCount = totalTrips;
+            await p.save();
+          }
+
           return {
             id: u._id.toString(),
             email: u.email,
@@ -431,7 +484,9 @@ export class AdminController {
                   vehicleId: p.vehicleId ? p.vehicleId.toString() : null,
                   licenseNumber: p.licenseNumber || null,
                   licenseExpirationDate: p.licenseExpirationDate || null,
-                  completedTripsCount: p.completedTripsCount,
+                  completedTripsCount: fnTrips,
+                  fortnightCompletedTripsCount: fnTrips,
+                  totalCompletedTripsCount: totalTrips,
                   weeklySchedule: p.weeklySchedule || null,
                   oneTimeChanges: p.oneTimeChanges || [],
                 }
