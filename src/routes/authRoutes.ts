@@ -20,6 +20,8 @@ const authLimiter = rateLimit({
 
 const router = Router();
 
+router.post("/send-registration-otp", authLimiter, (req, res, next) => authController.sendRegistrationOtp(req, res, next));
+router.post("/verify-registration-otp", authLimiter, (req, res, next) => authController.verifyRegistrationOtp(req, res, next));
 router.post("/register", authLimiter, (req, res, next) => authController.register(req, res, next));
 router.post("/login", authLimiter, (req, res, next) => authController.login(req, res, next));
 router.post("/forgot-password", authLimiter, (req, res, next) => authController.forgotPassword(req, res, next));

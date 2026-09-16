@@ -13,6 +13,7 @@ const registerBodySchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
   phone: z.string().optional(),
   role: z.enum(["USER", "DRIVER"]).optional().default("USER"),
+  otp: z.string().min(6, "OTP must be 6 digits").max(6, "OTP must be 6 digits"),
 });
 
 export class AuthController {
@@ -32,8 +33,8 @@ export class AuthController {
         return;
       }
 
-      const { name, email, password, phone, role } = parsedBody.data;
-      const result = await authService.register(name, email, password, phone, role as any);
+      const { name, email, password, phone, role, otp } = parsedBody.data;
+      const result = await authService.register(name, email, password, phone, role as any, otp);
 
       res.status(201).json({
         success: true,
@@ -169,7 +170,73 @@ export class AuthController {
       next(error);
     }
   }
+
+  async sendRegistrationOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const parsed = sendRegistrationOtpSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Invalid registration OTP request format",
+            details: parsed.error.flatten().fieldErrors,
+          },
+        });
+        return;
+      }
+
+      const result = await authService.sendRegistrationOtp(
+        parsed.data.email,
+        parsed.data.name,
+        parsed.data.role
+      );
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async verifyRegistrationOtp(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const parsed = verifyRegistrationOtpSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Invalid email or OTP format",
+            details: parsed.error.flatten().fieldErrors,
+          },
+        });
+        return;
+      }
+
+      const result = await authService.verifyRegistrationOtp(parsed.data.email, parsed.data.otp);
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
+const sendRegistrationOtpSchema = z.object({
+  email: z.string().email("Invalid email address format"),
+  name: z.string().optional(),
+  role: z.enum(["USER", "DRIVER"]).optional().default("USER"),
+});
+
+const verifyRegistrationOtpSchema = z.object({
+  email: z.string().email("Invalid email address format"),
+  otp: z.string().min(6, "OTP must be 6 digits").max(6, "OTP must be 6 digits"),
+});
 
 const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address format"),
@@ -187,3 +254,4 @@ const resetPasswordSchema = z.object({
 });
 
 export const authController = new AuthController();
+

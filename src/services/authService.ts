@@ -4,7 +4,8 @@ import { env } from "../config/env.js";
 import { IUser, UserRole } from "../models/User.js";
 import { DriverProfile } from "../models/DriverProfile.js";
 import { PasswordResetOtp } from "../models/PasswordResetOtp.js";
-import { sendPasswordResetOtpEmail } from "./emailService.js";
+import { RegistrationOtp } from "../models/RegistrationOtp.js";
+import { sendPasswordResetOtpEmail, sendRegistrationOtpEmail } from "./emailService.js";
 import { userRepository } from "../repositories/userRepository.js";
 
 export interface TokenPayload {
@@ -69,16 +70,96 @@ export class AuthService {
     };
   }
 
-  async register(name: string, email: string, password: string, phone?: string, role: UserRole = "USER"): Promise<AuthResult> {
-    const existing = await userRepository.findByEmail(email);
+  async sendRegistrationOtp(
+    email: string,
+    name?: string,
+    role: UserRole = "USER"
+  ): Promise<{ message: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    const existing = await userRepository.findByEmail(cleanEmail);
+    if (existing) {
+      throw {
+        statusCode: 409,
+        code: "EMAIL_ALREADY_EXISTS",
+        message: "An account with this email address already exists",
+      };
+    }
+
+    // Invalidate previous unused registration OTPs for this email
+    await RegistrationOtp.updateMany({ email: cleanEmail, used: false }, { used: true });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await RegistrationOtp.create({
+      email: cleanEmail,
+      otp,
+      role,
+      expiresAt,
+      used: false,
+    });
+
+    const recipientName = name || (role === "DRIVER" ? "Driver Partner" : "Valued User");
+    await sendRegistrationOtpEmail(cleanEmail, otp, recipientName);
+
+    return { message: "A 6-digit verification code has been sent to your email." };
+  }
+
+  async verifyRegistrationOtp(
+    email: string,
+    otp: string
+  ): Promise<{ verified: boolean; message: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanOtp = otp.trim();
+
+    const otpRecord = await RegistrationOtp.findOne({
+      email: cleanEmail,
+      otp: cleanOtp,
+      used: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!otpRecord) {
+      throw { statusCode: 400, code: "INVALID_OTP", message: "Invalid or expired verification code" };
+    }
+
+    return { verified: true, message: "Verification code is valid." };
+  }
+
+  async register(
+    name: string,
+    email: string,
+    password: string,
+    phone?: string,
+    role: UserRole = "USER",
+    otp?: string
+  ): Promise<AuthResult> {
+    const cleanEmail = email.trim().toLowerCase();
+    const existing = await userRepository.findByEmail(cleanEmail);
     if (existing) {
       throw { statusCode: 409, code: "EMAIL_ALREADY_EXISTS", message: "An account with this email address already exists" };
+    }
+
+    if (!otp) {
+      throw { statusCode: 400, code: "OTP_REQUIRED", message: "Verification code is required to complete registration" };
+    }
+
+    const cleanOtp = otp.trim();
+    const otpRecord = await RegistrationOtp.findOne({
+      email: cleanEmail,
+      otp: cleanOtp,
+      used: false,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!otpRecord) {
+      throw { statusCode: 400, code: "INVALID_OTP", message: "Invalid or expired verification code" };
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await userRepository.create({
       name,
-      email,
+      email: cleanEmail,
       passwordHash,
       role,
       phone,
@@ -92,6 +173,9 @@ export class AuthService {
         availabilityStatus: "OFFLINE",
       });
     }
+
+    otpRecord.used = true;
+    await otpRecord.save();
 
     const payload: TokenPayload = {
       userId: user._id.toString(),
