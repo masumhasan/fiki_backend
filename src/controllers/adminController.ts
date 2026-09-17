@@ -678,7 +678,7 @@ export class AdminController {
       const { status, type, search, tab } = req.query;
       const baseFilter: Record<string, unknown> = {};
 
-      let sortLogic: any = { pickupDate: 1, startDate: 1, scheduledTime: 1, createdAt: 1 };
+      let sortLogic: any = { scheduledTime: -1, createdAt: -1 };
 
       if (type === "requests" || type === "master") {
         baseFilter.parentRequestId = { $exists: false };
@@ -723,10 +723,13 @@ export class AdminController {
       const getTabFilter = (tabName: string): Record<string, unknown> => {
         const f: Record<string, unknown> = { ...baseFilter };
         if (tabName === "completed") {
-          f.$or = [
-            { status: "COMPLETED" },
-            { status: "CANCELLED", cancellationReason: { $in: ["No Show Up", "NO_SHOW"] } },
-          ];
+          f.status = "COMPLETED";
+        } else if (tabName === "noShow") {
+          f.status = "CANCELLED";
+          f.cancellationReason = { $in: ["No Show Up", "NO_SHOW"] };
+        } else if (tabName === "cancelled") {
+          f.status = "CANCELLED";
+          f.cancellationReason = { $nin: ["No Show Up", "NO_SHOW"] };
         } else if (tabName === "missed") {
           f.$or = [
             { status: "MISSED" },
@@ -770,10 +773,12 @@ export class AdminController {
       };
 
       // Generate tab counts concurrently
-      const [todayCount, nextDayCount, completedTabCount, missedCount, allCount] = await Promise.all([
+      const [todayCount, nextDayCount, completedTabCount, noShowCount, cancelledCount, missedCount, allCount] = await Promise.all([
         Trip.countDocuments(getTabFilter("today")),
         Trip.countDocuments(getTabFilter("nextDay")),
         Trip.countDocuments(getTabFilter("completed")),
+        Trip.countDocuments(getTabFilter("noShow")),
+        Trip.countDocuments(getTabFilter("cancelled")),
         Trip.countDocuments(getTabFilter("missed")),
         Trip.countDocuments(getTabFilter("all")),
       ]);
@@ -781,8 +786,12 @@ export class AdminController {
       const activeTab = tab ? (tab as string) : "all";
       const filter: Record<string, unknown> = getTabFilter(activeTab);
 
-      if (activeTab === "missed") {
-        sortLogic = { pickupDate: -1, startDate: -1, scheduledTime: -1, createdAt: -1 };
+      if (type === "live") {
+        sortLogic = { inProgressAt: -1, updatedAt: -1, createdAt: -1 };
+      } else if (activeTab === "today" || activeTab === "nextDay" || activeTab === "upcoming") {
+        sortLogic = { scheduledTime: 1, createdAt: 1 };
+      } else {
+        sortLogic = { scheduledTime: -1, createdAt: -1 };
       }
 
       if (status) {
@@ -790,6 +799,9 @@ export class AdminController {
         if (statusStr === "NO_SHOW") {
           filter.status = "CANCELLED";
           filter.cancellationReason = { $in: ["No Show Up", "NO_SHOW"] };
+        } else if (statusStr === "CANCELLED") {
+          filter.status = "CANCELLED";
+          filter.cancellationReason = { $nin: ["No Show Up", "NO_SHOW"] };
         } else if (statusStr === "NEED_DRIVER") {
           filter.status = { $in: ["REQUESTED", "ACCEPTED", "QUOTE_ACCEPTED"] };
           filter.$and = [
@@ -853,6 +865,8 @@ export class AdminController {
             nextDay: nextDayCount,
             upcoming: nextDayCount,
             completed: completedTabCount,
+            noShow: noShowCount,
+            cancelled: cancelledCount,
             missed: missedCount,
             all: allCount,
           },
@@ -865,6 +879,8 @@ export class AdminController {
               today: todayCount,
               nextDay: nextDayCount,
               completed: completedTabCount,
+              noShow: noShowCount,
+              cancelled: cancelledCount,
               missed: missedCount,
               all: allCount,
             },
