@@ -916,8 +916,40 @@ export class AdminController {
         return;
       }
 
+      // Check if trip is completed
+      if (trip.status === "COMPLETED") {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: "TRIP_COMPLETED",
+            message: "Cannot assign or reassign a driver to a completed trip.",
+          },
+        });
+        return;
+      }
+
+      // Only allow assigning or reassigning driver to scheduled trips
+      const allowedScheduledStatuses = [
+        "REQUESTED",
+        "QUOTE_ACCEPTED",
+        "ACCEPTED",
+        "DRIVER_ARRIVING",
+        "DRIVER_ARRIVED",
+      ];
+      if (!allowedScheduledStatuses.includes(trip.status)) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: "TRIP_NOT_SCHEDULED",
+            message: `Cannot assign or reassign a driver to a trip with status '${trip.status}'. Only scheduled trips can have drivers assigned or reassigned.`,
+          },
+        });
+        return;
+      }
+
       const rawDriverId = parsed.data.driverId?.trim();
       const now = new Date();
+      const previousDriverId = trip.driverId;
 
       if (rawDriverId) {
         const driver = await User.findOne({ _id: rawDriverId, role: "DRIVER", accountStatus: "ACTIVE" });
@@ -938,10 +970,38 @@ export class AdminController {
           { userId: driver._id },
           { availabilityStatus: "ASSIGNED" }
         );
+
+        if (previousDriverId && previousDriverId.toString() !== driver._id.toString()) {
+          const otherActiveTrips = await Trip.countDocuments({
+            driverId: previousDriverId,
+            status: { $in: ["ACCEPTED", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
+            _id: { $ne: trip._id },
+          });
+          if (otherActiveTrips === 0) {
+            await DriverProfile.findOneAndUpdate(
+              { userId: previousDriverId },
+              { availabilityStatus: "ONLINE" }
+            );
+          }
+        }
       } else {
         // Unassign driver from this trip
         trip.driverId = undefined;
         await trip.save();
+
+        if (previousDriverId) {
+          const otherActiveTrips = await Trip.countDocuments({
+            driverId: previousDriverId,
+            status: { $in: ["ACCEPTED", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
+            _id: { $ne: trip._id },
+          });
+          if (otherActiveTrips === 0) {
+            await DriverProfile.findOneAndUpdate(
+              { userId: previousDriverId },
+              { availabilityStatus: "ONLINE" }
+            );
+          }
+        }
       }
 
       await AuditLog.create({
