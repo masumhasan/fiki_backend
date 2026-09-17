@@ -1253,15 +1253,29 @@ export class AdminController {
       }
 
       const targetIdObj = new mongoose.Types.ObjectId(id);
-      const masterIdObj = trip.parentRequestId ? new mongoose.Types.ObjectId(trip.parentRequestId.toString()) : targetIdObj;
+      const isCascade = req.query.cascade === "true" || req.query.all === "true";
 
-      await Trip.deleteMany({
-        $or: [
-          { _id: masterIdObj },
-          { parentRequestId: masterIdObj },
-          { _id: targetIdObj },
-        ],
-      });
+      if (isCascade) {
+        const masterIdObj = trip.parentRequestId ? new mongoose.Types.ObjectId(trip.parentRequestId.toString()) : targetIdObj;
+        await Trip.deleteMany({
+          $or: [
+            { _id: masterIdObj },
+            { parentRequestId: masterIdObj },
+            { _id: targetIdObj },
+          ],
+        });
+      } else if (trip.parentRequestId) {
+        // Individual trip belonging to a ride request: delete ONLY this specific trip
+        await Trip.findByIdAndDelete(targetIdObj);
+      } else {
+        // Master request: delete the request and its generated child trips
+        await Trip.deleteMany({
+          $or: [
+            { _id: targetIdObj },
+            { parentRequestId: targetIdObj },
+          ],
+        });
+      }
 
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
@@ -1275,7 +1289,9 @@ export class AdminController {
 
       res.status(200).json({
         success: true,
-        message: "Trip and all associated recurring instances deleted successfully",
+        message: isCascade || !trip.parentRequestId
+          ? "Trip and all associated recurring instances deleted successfully"
+          : "Trip deleted successfully",
       });
     } catch (error) {
       next(error);
@@ -2906,7 +2922,12 @@ export class AdminController {
             $match: {
               driverId: { $in: userIds },
               status: "COMPLETED",
-              createdAt: { $gte: filterStart, $lte: filterEnd },
+              $or: [
+                { completedAt: { $gte: filterStart, $lte: filterEnd } },
+                { scheduledTime: { $gte: filterStart, $lte: filterEnd } },
+                { pickupDate: { $gte: activePeriod.startDate, $lte: activePeriod.endDate } },
+                { createdAt: { $gte: filterStart, $lte: filterEnd } },
+              ],
             },
           },
           {
