@@ -645,7 +645,8 @@ export class AdminController {
         fare: fare,
         quotedFare: fare,
         quotedAt: new Date(),
-        status: "QUOTE_ACCEPTED",
+        status: "ACCEPTED",
+        acceptedAt: new Date(),
         scheduledTime,
         startDate: sDate,
         endDate: eDate,
@@ -699,15 +700,20 @@ export class AdminController {
       const summaryData = await Trip.aggregate(summaryPipeline);
       
       let onboardNow = 0;
-      let needDriver = 0;
       let completedCount = 0;
       let totalSummaryTrips = 0;
       
       summaryData.forEach(item => {
         totalSummaryTrips += item.count;
         if (item._id === "IN_PROGRESS") onboardNow += item.count;
-        else if (item._id === "REQUESTED") needDriver += item.count;
         else if (item._id === "COMPLETED") completedCount += item.count;
+      });
+
+      // Need driver: active, operational trips that have no assigned driver
+      const needDriver = await Trip.countDocuments({
+        ...baseFilter,
+        status: { $in: ["REQUESTED", "ACCEPTED", "QUOTE_ACCEPTED"] },
+        $or: [{ driverId: { $exists: false } }, { driverId: null }],
       });
 
       const todayStr = getCentralTodayStr();
@@ -784,6 +790,15 @@ export class AdminController {
         if (statusStr === "NO_SHOW") {
           filter.status = "CANCELLED";
           filter.cancellationReason = { $in: ["No Show Up", "NO_SHOW"] };
+        } else if (statusStr === "NEED_DRIVER") {
+          filter.status = { $in: ["REQUESTED", "ACCEPTED", "QUOTE_ACCEPTED"] };
+          filter.$and = [
+            ...(Array.isArray(filter.$and) ? (filter.$and as any[]) : []),
+            { $or: [{ driverId: { $exists: false } }, { driverId: null }] },
+          ];
+        } else if (statusStr.toLowerCase() === "scheduled") {
+          filter.status = { $in: ["ACCEPTED", "DRIVER_ARRIVING", "DRIVER_ARRIVED"] };
+          filter.driverId = { $exists: true, $ne: null };
         } else if (statusStr.includes(",")) {
           filter.status = { $in: statusStr.split(",") };
         } else {

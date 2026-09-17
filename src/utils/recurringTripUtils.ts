@@ -136,7 +136,9 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
 
     // 1. Outbound Leg
     if (!hasActiveOrCompletedOutbound) {
-      const outboundStatus = driverId ? (masterTrip.status || "ACCEPTED") : (masterTrip.status || "REQUESTED");
+      const outboundStatus = (masterTrip.status === "ACCEPTED" || masterTrip.status === "QUOTE_ACCEPTED")
+        ? "ACCEPTED"
+        : (masterTrip.status || "REQUESTED");
       childDocs.push({
         ...baseSharedFields,
         schedule: "one-time",
@@ -156,8 +158,9 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
 
     // 2. Return Leg
     if (!hasActiveOrCompletedReturn) {
-      // Return leg starts in ACCEPTED (or REQUESTED if no driver) so it does not auto-advance with outbound
-      const returnStatus = driverId ? "ACCEPTED" : (masterTrip.status === "REQUESTED" ? "REQUESTED" : "ACCEPTED");
+      const returnStatus = (masterTrip.status === "ACCEPTED" || masterTrip.status === "QUOTE_ACCEPTED")
+        ? "ACCEPTED"
+        : (masterTrip.status || "REQUESTED");
       childDocs.push({
         ...baseSharedFields,
         schedule: "one-time",
@@ -287,7 +290,9 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
         parentRequestId: masterId,
         passengerId,
         driverId,
-        status: driverId ? "ACCEPTED" : (masterTrip.status || "REQUESTED"),
+        status: (masterTrip.status === "ACCEPTED" || masterTrip.status === "QUOTE_ACCEPTED")
+          ? "ACCEPTED"
+          : (masterTrip.status || "REQUESTED"),
         assignedAt: masterTrip.assignedAt,
         acceptedAt: masterTrip.acceptedAt,
         fare: masterTrip.fare,
