@@ -1938,7 +1938,12 @@ export class AdminController {
               todayRevenue: {
                 $sum: {
                   $cond: [
-                    { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", "$updatedAt"] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, todayStart] },
+                    {
+                      $and: [
+                        { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, todayBounds.start] },
+                        { $lte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, todayBounds.end] },
+                      ],
+                    },
                     { $ifNull: ["$fare", { $ifNull: ["$quotedFare", 0] }] },
                     0,
                   ],
@@ -1947,7 +1952,12 @@ export class AdminController {
               weeklyRevenue: {
                 $sum: {
                   $cond: [
-                    { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", "$updatedAt"] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, startOfWeek] },
+                    {
+                      $and: [
+                        { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, weekBounds.start] },
+                        { $lte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, todayBounds.end] },
+                      ],
+                    },
                     { $ifNull: ["$fare", { $ifNull: ["$quotedFare", 0] }] },
                     0,
                   ],
@@ -1956,7 +1966,12 @@ export class AdminController {
               fortnightRevenue: {
                 $sum: {
                   $cond: [
-                    { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", "$updatedAt"] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, startOfFortnight] },
+                    {
+                      $and: [
+                        { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, fortnightBounds.start] },
+                        { $lte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, todayBounds.end] },
+                      ],
+                    },
                     { $ifNull: ["$fare", { $ifNull: ["$quotedFare", 0] }] },
                     0,
                   ],
@@ -1965,7 +1980,12 @@ export class AdminController {
               monthlyRevenue: {
                 $sum: {
                   $cond: [
-                    { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", "$updatedAt"] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, startOfMonth] },
+                    {
+                      $and: [
+                        { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, startOfMonth] },
+                        { $lte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, endOfMonth] },
+                      ],
+                    },
                     { $ifNull: ["$fare", { $ifNull: ["$quotedFare", 0] }] },
                     0,
                   ],
@@ -1974,7 +1994,12 @@ export class AdminController {
               yearlyRevenue: {
                 $sum: {
                   $cond: [
-                    { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", "$updatedAt"] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, startOfYear] },
+                    {
+                      $and: [
+                        { $gte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, startOfYear] },
+                        { $lte: [{ $convert: { input: { $ifNull: ["$completedAt", { $ifNull: ["$scheduledTime", "$createdAt"] }] }, to: "date", onError: "$createdAt", onNull: "$createdAt" } }, endOfYear] },
+                      ],
+                    },
                     { $ifNull: ["$fare", { $ifNull: ["$quotedFare", 0] }] },
                     0,
                   ],
