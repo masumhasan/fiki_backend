@@ -283,21 +283,31 @@ export class AdminController {
         }
       }
 
-      const filterStart = new Date(`${activePeriod.startDate}T00:00:00.000Z`);
-      const filterEnd = new Date(`${activePeriod.endDate}T23:59:59.999Z`);
+      const startBounds = getCentralDayBounds(activePeriod.startDate);
+      const endBounds = getCentralDayBounds(activePeriod.endDate);
+      const filterStart = startBounds.start;
+      const filterEnd = endBounds.end;
 
       const [trips, shifts] = await Promise.all([
         Trip.find({
           driverId: user._id,
-          createdAt: { $gte: filterStart, $lte: filterEnd },
+          $or: [
+            { completedAt: { $gte: filterStart, $lte: filterEnd } },
+            { scheduledTime: { $gte: filterStart, $lte: filterEnd } },
+            { pickupDate: { $gte: activePeriod.startDate, $lte: activePeriod.endDate } },
+            { createdAt: { $gte: filterStart, $lte: filterEnd } },
+          ],
         })
-          .select("_id status fare pickupLocation dropoffLocation fullName passengerId createdAt")
+          .select("_id status fare pickupLocation dropoffLocation fullName passengerId pickupDate pickupTime scheduledTime completedAt createdAt")
           .populate("passengerId", "name")
-          .sort({ createdAt: -1 })
+          .sort({ completedAt: -1, scheduledTime: -1, createdAt: -1 })
           .lean(),
         DriverShift.find({
           driverId: user._id,
-          startedAt: { $gte: filterStart, $lte: filterEnd },
+          $or: [
+            { startedAt: { $gte: filterStart, $lte: filterEnd } },
+            { endedAt: { $gte: filterStart, $lte: filterEnd } },
+          ],
         }).lean(),
       ]);
 
@@ -369,6 +379,10 @@ export class AdminController {
             pickup: t.pickupLocation?.address || null,
             dropoff: t.dropoffLocation?.address || null,
             passengerName: t.fullName || (t.passengerId as any)?.name || null,
+            pickupDate: t.pickupDate || null,
+            pickupTime: t.pickupTime || null,
+            scheduledTime: t.scheduledTime || null,
+            completedAt: t.completedAt || null,
             createdAt: t.createdAt,
           })),
           completedTrips: completedTrips.map((t) => ({
@@ -378,6 +392,10 @@ export class AdminController {
             pickup: t.pickupLocation?.address || null,
             dropoff: t.dropoffLocation?.address || null,
             passengerName: t.fullName || (t.passengerId as any)?.name || null,
+            pickupDate: t.pickupDate || null,
+            pickupTime: t.pickupTime || null,
+            scheduledTime: t.scheduledTime || null,
+            completedAt: t.completedAt || null,
             createdAt: t.createdAt,
           })),
           allTrips: trips.map((t) => ({
@@ -387,6 +405,10 @@ export class AdminController {
             pickup: t.pickupLocation?.address || null,
             dropoff: t.dropoffLocation?.address || null,
             passengerName: t.fullName || (t.passengerId as any)?.name || null,
+            pickupDate: t.pickupDate || null,
+            pickupTime: t.pickupTime || null,
+            scheduledTime: t.scheduledTime || null,
+            completedAt: t.completedAt || null,
             createdAt: t.createdAt,
           })),
           stats: {
@@ -2991,8 +3013,10 @@ export class AdminController {
         }
       }
 
-      const filterStart = new Date(`${activePeriod.startDate}T00:00:00.000Z`);
-      const filterEnd = new Date(`${activePeriod.endDate}T23:59:59.999Z`);
+      const startBounds = getCentralDayBounds(activePeriod.startDate);
+      const endBounds = getCentralDayBounds(activePeriod.endDate);
+      const filterStart = startBounds.start;
+      const filterEnd = endBounds.end;
 
       // Fetch all driver profiles
       const profiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).lean();
