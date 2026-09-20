@@ -2499,6 +2499,15 @@ export class AdminController {
       const approvedUsers = await User.find({ _id: { $in: approvedUserIds } }).select("name avatarUrl").lean();
       const approvedUserMap = new Map(approvedUsers.map((u: any) => [u._id.toString(), u]));
 
+      // Fetch vehicles to map driver assignments accurately
+      const allVehicles = await Vehicle.find().lean();
+      const vehicleByIdMap = new Map(allVehicles.map((v: any) => [v._id.toString(), v]));
+      const vehicleByDriverMap = new Map(
+        allVehicles
+          .filter((v: any) => v.assignedDriverId)
+          .map((v: any) => [v.assignedDriverId.toString(), v])
+      );
+
       const driverStatusColors = ["#10ac7b", "#f39200", "#2563eb", "#8345ed", "#0794b5"];
       const driverStatus = allApprovedProfiles.map((p: any, idx: number) => {
         const uidStr = p.userId.toString();
@@ -2516,12 +2525,20 @@ export class AdminController {
           color = "#6b7280";
         }
 
+        const assignedVeh = p.vehicleId
+          ? vehicleByIdMap.get(p.vehicleId.toString())
+          : vehicleByDriverMap.get(uidStr);
+        const vehicleName =
+          assignedVeh?.modelName?.trim() ||
+          p.vehicle?.model?.trim() ||
+          "No vehicle assigned";
+
         return {
           id: uidStr,
           initials,
           name,
           avatarUrl: u?.avatarUrl || "",
-          vehicle: "Toyota Prius",
+          vehicle: vehicleName,
           status: statusStr,
           color,
         };

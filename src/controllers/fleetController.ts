@@ -33,14 +33,32 @@ export class FleetController {
       const profileMap = new Map();
       profiles.forEach((p: any) => profileMap.set(p.userId.toString(), p));
 
+      const vehicles = await Vehicle.find().lean();
+      const vehicleMap = new Map(vehicles.map((v: any) => [v._id.toString(), v]));
+
       const reports = shifts.map((s: any) => {
         const driverUser = s.driverId;
         const driverIdStr = driverUser?._id?.toString() || s.driverId?.toString();
         const profile = profileMap.get(driverIdStr);
+        const assignedVeh = profile?.vehicleId ? vehicleMap.get(profile.vehicleId.toString()) : null;
 
         const driverName = driverUser?.name || "Driver";
-        const vehicleName = [s.vehicleInfo?.make || profile?.vehicle?.make || "Toyota", s.vehicleInfo?.model || profile?.vehicle?.model || "Sienna"].filter(Boolean).join(" ");
-        const vehicleNumber = s.vehicleInfo?.licensePlate || profile?.vehicle?.licensePlate || "FKT-1234";
+        const rawModel = (s.vehicleInfo?.model || profile?.vehicle?.model || assignedVeh?.modelName || "").trim();
+        const rawMake = (s.vehicleInfo?.make || profile?.vehicle?.make || "").trim();
+        let vehicleName = "—";
+        if (rawMake && rawModel) {
+          if (rawModel.toLowerCase().includes(rawMake.toLowerCase())) {
+            vehicleName = rawModel;
+          } else {
+            vehicleName = `${rawMake} ${rawModel}`;
+          }
+        } else if (rawModel) {
+          vehicleName = rawModel;
+        } else if (rawMake) {
+          vehicleName = rawMake;
+        }
+
+        const vehicleNumber = s.vehicleInfo?.licensePlate || profile?.vehicle?.licensePlate || assignedVeh?.licensePlate || "—";
 
         const startDateObj = new Date(s.startedAt);
         const dateStr = startDateObj.toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", year: "numeric" });
@@ -115,10 +133,28 @@ export class FleetController {
       const driverUser = shift.driverId;
       const driverIdStr = driverUser?._id?.toString() || shift.driverId?.toString();
       const profile = await DriverProfile.findOne({ userId: driverIdStr }).lean();
+      let assignedVeh: any = null;
+      if (profile?.vehicleId) {
+        assignedVeh = await Vehicle.findById(profile.vehicleId).lean();
+      }
 
       const driverName = driverUser?.name || "Driver";
-      const vehicleName = [shift.vehicleInfo?.make || profile?.vehicle?.make || "Toyota", shift.vehicleInfo?.model || profile?.vehicle?.model || "Sienna"].filter(Boolean).join(" ");
-      const vehicleNumber = shift.vehicleInfo?.licensePlate || profile?.vehicle?.licensePlate || "FKT-1234";
+      const rawModel = (shift.vehicleInfo?.model || profile?.vehicle?.model || assignedVeh?.modelName || "").trim();
+      const rawMake = (shift.vehicleInfo?.make || profile?.vehicle?.make || "").trim();
+      let vehicleName = "—";
+      if (rawMake && rawModel) {
+        if (rawModel.toLowerCase().includes(rawMake.toLowerCase())) {
+          vehicleName = rawModel;
+        } else {
+          vehicleName = `${rawMake} ${rawModel}`;
+        }
+      } else if (rawModel) {
+        vehicleName = rawModel;
+      } else if (rawMake) {
+        vehicleName = rawMake;
+      }
+
+      const vehicleNumber = shift.vehicleInfo?.licensePlate || profile?.vehicle?.licensePlate || assignedVeh?.licensePlate || "—";
 
       const startDateObj = new Date(shift.startedAt);
       const dateStr = startDateObj.toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "long", day: "numeric", year: "numeric" });
