@@ -658,7 +658,18 @@ export class AdminController {
       const eDate = tripData.endDate || tripData.returnDate || tripData.recurringEndDate;
       const scheduledTime = sDate ? parseCentralDateTime(tripData.pickupTime || "09:00", sDate) : undefined;
 
-      const { fare, pickupAddress, destinationAddress, ...restOfTripData } = tripData;
+      const {
+        fare,
+        pickupAddress,
+        destinationAddress,
+        startDate: _sd,
+        endDate: _ed,
+        pickupDate: _pd,
+        returnDate: _rd,
+        recurringStartDate: _rsd,
+        recurringEndDate: _red,
+        ...restOfTripData
+      } = tripData;
 
       const trip = await Trip.create({
         passengerId: passenger._id,
@@ -1261,6 +1272,16 @@ export class AdminController {
       }
       if (body.passengerAvatarUrl !== undefined) {
         trip.passengerAvatarUrl = body.passengerAvatarUrl;
+      }
+      if (body.startDate) {
+        trip.startDate = body.startDate;
+        trip.pickupDate = body.startDate;
+        trip.recurringStartDate = body.startDate;
+      }
+      if (body.endDate) {
+        trip.endDate = body.endDate;
+        trip.returnDate = body.endDate;
+        trip.recurringEndDate = body.endDate;
       }
 
       Object.assign(trip, body);

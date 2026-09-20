@@ -118,11 +118,11 @@ export async function generateRecurringTripsForMaster(masterTrip: any) {
     const hasActiveOrCompletedOutbound = existingActiveOrCompleted.some((t: any) => !t.isReturnLeg);
     const hasActiveOrCompletedReturn = existingActiveOrCompleted.some((t: any) => t.isReturnLeg);
 
-    const outboundDateStr = masterTrip.pickupDate || masterTrip.startDate || startDateStr;
+    const outboundDateStr = masterTrip.startDate || masterTrip.pickupDate || startDateStr;
     const outboundPickupTime = masterTrip.pickupTime || "08:00 AM";
     const outboundScheduledTime = parseCentralDateTime(outboundPickupTime, outboundDateStr);
 
-    const returnDateStr = masterTrip.returnDate || masterTrip.endDate || outboundDateStr;
+    const returnDateStr = masterTrip.endDate || masterTrip.returnDate || outboundDateStr;
     const returnPickupTime = masterTrip.returnPickupTime || "05:00 PM";
     const returnScheduledTime = parseCentralDateTime(returnPickupTime, returnDateStr);
 
