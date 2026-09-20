@@ -1415,9 +1415,15 @@ export class AdminController {
         return;
       }
 
-      await generateRecurringTripsForMaster(trip);
+      const result = await generateRecurringTripsForMaster(trip);
+      const updatedTrip = await Trip.findById(id);
 
       const count = await Trip.countDocuments({ parentRequestId: trip._id });
+
+      let message = `Successfully regenerated ${count} trip leg(s) for this request`;
+      if (result?.isMasterExecutable) {
+        message = `Successfully updated one-way trip schedule for ${updatedTrip?.pickupDate || updatedTrip?.startDate || "scheduled date"}`;
+      }
 
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
@@ -1430,9 +1436,9 @@ export class AdminController {
 
       res.status(200).json({
         success: true,
-        message: `Successfully regenerated ${count} trip legs for this request`,
+        message,
         count,
-        data: trip,
+        data: updatedTrip || trip,
       });
     } catch (error) {
       next(error);
