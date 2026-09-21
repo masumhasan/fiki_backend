@@ -1151,11 +1151,17 @@ export class DriverController {
       const filterStart = new Date(`${activePeriod.startDate}T00:00:00.000Z`);
       const filterEnd = new Date(`${activePeriod.endDate}T23:59:59.999Z`);
 
+      // Exclude master parent container requests when child legs exist
+      const parentIdsWithChildren = await Trip.find({
+        parentRequestId: { $exists: true, $ne: null },
+      }).distinct("parentRequestId");
+
       // Fetch completed trips and shifts in selected pay period in parallel
       const [completedTrips, completedShifts] = await Promise.all([
         Trip.find({
           driverId,
           status: "COMPLETED",
+          _id: { $nin: parentIdsWithChildren },
           createdAt: { $gte: filterStart, $lte: filterEnd },
         }).sort({ createdAt: -1 }).lean(),
         DriverShift.find({
@@ -1378,10 +1384,16 @@ export class DriverController {
         weekDateStrs.push(toDateStr(d));
       }
 
+      // Exclude master parent container requests when child legs exist
+      const parentIdsWithChildren = await Trip.find({
+        parentRequestId: { $exists: true, $ne: null },
+      }).distinct("parentRequestId");
+
       // Fetch today's trips, shift, week shifts, and pending end report shift concurrently
       const [todayTrips, todayShift, weekShifts, pendingEndReportShift] = await Promise.all([
         Trip.find({
           driverId,
+          _id: { $nin: parentIdsWithChildren },
           $or: [
             { pickupDate: todayStr },
             {
