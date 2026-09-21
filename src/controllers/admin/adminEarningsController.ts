@@ -50,6 +50,11 @@ export class AdminEarningsController {
       const users = await User.find({ _id: { $in: userIds } }).select("name email phone avatarUrl").lean();
       const userMap = new Map(users.map((u: any) => [u._id.toString(), u]));
 
+      // Exclude parent container requests whose child legs exist to avoid double-counting
+      const parentIdsWithChildren = await Trip.find({
+        parentRequestId: { $exists: true, $ne: null },
+      }).distinct("parentRequestId");
+
       // Fetch completed trips and driver shifts in pay period in parallel
       const [tripAgg, shiftDocs] = await Promise.all([
         Trip.aggregate([
@@ -57,6 +62,7 @@ export class AdminEarningsController {
             $match: {
               driverId: { $in: userIds },
               status: "COMPLETED",
+              _id: { $nin: parentIdsWithChildren },
               $or: [
                 { completedAt: { $gte: filterStart, $lte: filterEnd } },
                 { scheduledTime: { $gte: filterStart, $lte: filterEnd } },

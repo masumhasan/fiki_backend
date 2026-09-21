@@ -84,9 +84,15 @@ export class AdminDriverController {
       const filterStart = startBounds.start;
       const filterEnd = endBounds.end;
 
+      // Exclude parent container requests whose child legs exist to avoid duplicate entries
+      const parentIdsWithChildren = await Trip.find({
+        parentRequestId: { $exists: true, $ne: null },
+      }).distinct("parentRequestId");
+
       const [trips, shifts] = await Promise.all([
         Trip.find({
           driverId: user._id,
+          _id: { $nin: parentIdsWithChildren },
           $or: [
             { completedAt: { $gte: filterStart, $lte: filterEnd } },
             { scheduledTime: { $gte: filterStart, $lte: filterEnd } },
