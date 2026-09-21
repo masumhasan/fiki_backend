@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { Trip } from "../../models/Trip.js";
 import { User } from "../../models/User.js";
 import { DriverProfile } from "../../models/DriverProfile.js";
+import { DriverShift } from "../../models/DriverShift.js";
 import { AuditLog } from "../../models/AuditLog.js";
 import { generateRecurringTripsForMaster } from "../../utils/recurringTripUtils.js";
 import { parseCentralDateTime, getCentralTodayStr, getCentralTomorrowStr, getCentralDayBounds } from "../../utils/dateUtils.js";
@@ -492,10 +493,17 @@ export class AdminTripController {
         }
         await trip.save();
 
-        await DriverProfile.findOneAndUpdate(
-          { userId: driver._id },
-          { availabilityStatus: "ASSIGNED" }
-        );
+        const driverOnShift = await DriverShift.exists({
+          driverId: driver._id,
+          status: "IN_PROGRESS",
+        });
+
+        if (driverOnShift) {
+          await DriverProfile.findOneAndUpdate(
+            { userId: driver._id },
+            { availabilityStatus: "ASSIGNED" }
+          );
+        }
 
         if (previousDriverId && previousDriverId.toString() !== driver._id.toString()) {
           const otherActiveTrips = await Trip.countDocuments({
@@ -504,9 +512,13 @@ export class AdminTripController {
             _id: { $ne: trip._id },
           });
           if (otherActiveTrips === 0) {
+            const prevOnShift = await DriverShift.exists({
+              driverId: previousDriverId,
+              status: "IN_PROGRESS",
+            });
             await DriverProfile.findOneAndUpdate(
               { userId: previousDriverId },
-              { availabilityStatus: "ONLINE" }
+              { availabilityStatus: prevOnShift ? "ONLINE" : "OFFLINE" }
             );
           }
         }
@@ -522,9 +534,13 @@ export class AdminTripController {
             _id: { $ne: trip._id },
           });
           if (otherActiveTrips === 0) {
+            const prevOnShift = await DriverShift.exists({
+              driverId: previousDriverId,
+              status: "IN_PROGRESS",
+            });
             await DriverProfile.findOneAndUpdate(
               { userId: previousDriverId },
-              { availabilityStatus: "ONLINE" }
+              { availabilityStatus: prevOnShift ? "ONLINE" : "OFFLINE" }
             );
           }
         }

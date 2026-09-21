@@ -4,6 +4,8 @@ import { Trip } from "../../models/Trip.js";
 import { User } from "../../models/User.js";
 import { DriverProfile } from "../../models/DriverProfile.js";
 import { Vehicle } from "../../models/Vehicle.js";
+import { DriverShift } from "../../models/DriverShift.js";
+import { checkAndAutoEndActiveShift } from "../driverController.js";
 import { getCentralTodayStr, getCentralDayBounds } from "../../utils/dateUtils.js";
 
 export class AdminAnalyticsController {
@@ -385,7 +387,7 @@ export class AdminAnalyticsController {
           },
         ]),
         User.countDocuments({ role: "DRIVER", deletedAt: null }),
-        DriverProfile.countDocuments({ availabilityStatus: { $in: ["ONLINE", "ASSIGNED", "ON_TRIP"] } }),
+        DriverShift.countDocuments({ status: "IN_PROGRESS" }),
         DriverProfile.countDocuments({ availabilityStatus: "ON_TRIP" }),
         User.countDocuments({ role: "PASSENGER", deletedAt: null }),
         User.countDocuments({ role: "PASSENGER", deletedAt: null, createdAt: { $gte: startOfWeek } }),
@@ -673,10 +675,41 @@ export class AdminAnalyticsController {
       };
 
       // Driver Status List for Dashboard Card
-      const allApprovedProfiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).limit(10).lean();
+      const allApprovedProfiles = await DriverProfile.find({ approvalStatus: "APPROVED" }).lean();
       const approvedUserIds = allApprovedProfiles.map((p: any) => p.userId);
-      const approvedUsers = await User.find({ _id: { $in: approvedUserIds } }).select("name avatarUrl").lean();
+      const approvedUsers = await User.find({ _id: { $in: approvedUserIds }, deletedAt: null }).select("name avatarUrl").lean();
       const approvedUserMap = new Map(approvedUsers.map((u: any) => [u._id.toString(), u]));
+
+      // Check active shifts for approved drivers and auto-end expired ones
+      const inProgressShifts = await DriverShift.find({
+        driverId: { $in: approvedUserIds },
+        status: "IN_PROGRESS",
+      });
+
+      const activeDriverIdSet = new Set<string>();
+      for (const shift of inProgressShifts) {
+        const p = allApprovedProfiles.find((prof: any) => prof.userId.toString() === shift.driverId.toString());
+        const stillActive = await checkAndAutoEndActiveShift(shift.driverId, p, now);
+        if (stillActive) {
+          activeDriverIdSet.add(shift.driverId.toString());
+        }
+      }
+
+      // Sync DriverProfile.availabilityStatus with real-time clock status
+      for (const p of allApprovedProfiles) {
+        const uidStr = p.userId.toString();
+        const isOnShift = activeDriverIdSet.has(uidStr);
+        if (!isOnShift && p.availabilityStatus !== "OFFLINE") {
+          p.availabilityStatus = "OFFLINE";
+          DriverProfile.updateOne({ _id: p._id }, { availabilityStatus: "OFFLINE" }).exec();
+        } else if (isOnShift && p.availabilityStatus === "OFFLINE") {
+          p.availabilityStatus = "ONLINE";
+          DriverProfile.updateOne({ _id: p._id }, { availabilityStatus: "ONLINE" }).exec();
+        }
+      }
+
+      // Real-time active drivers on the clock right now
+      const realTimeActiveDrivers = activeDriverIdSet.size;
 
       // Fetch vehicles to map driver assignments accurately
       const allVehicles = await Vehicle.find().lean();
@@ -687,40 +720,43 @@ export class AdminAnalyticsController {
           .map((v: any) => [v.assignedDriverId.toString(), v])
       );
 
-      const driverStatusColors = ["#10ac7b", "#f39200", "#2563eb", "#8345ed", "#0794b5"];
-      const driverStatus = allApprovedProfiles.map((p: any, idx: number) => {
-        const uidStr = p.userId.toString();
-        const u = approvedUserMap.get(uidStr);
-        const name = u?.name || "Driver";
-        const initials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
+      const driverStatus = allApprovedProfiles
+        .filter((p: any) => approvedUserMap.has(p.userId.toString()))
+        .map((p: any) => {
+          const uidStr = p.userId.toString();
+          const u = approvedUserMap.get(uidStr);
+          const name = u?.name || "Driver";
+          const initials = name.split(" ").map((n: string) => n[0]).join("").toUpperCase().substring(0, 2) || "DR";
 
-        let statusStr = "On Duty";
-        let color = driverStatusColors[idx % driverStatusColors.length];
-        if (p.availabilityStatus === "ASSIGNED" || p.availabilityStatus === "ON_TRIP") {
-          statusStr = "In Progress";
-          color = "#f39200";
-        } else if (p.availabilityStatus === "OFFLINE" || p.availabilityStatus === "UNAVAILABLE") {
-          statusStr = "Off Duty";
-          color = "#6b7280";
-        }
+          const isOnTheClock = activeDriverIdSet.has(uidStr);
+          const statusStr = isOnTheClock ? "Online" : "Offline";
+          const color = isOnTheClock ? "#10ac7b" : "#6b7280";
 
-        const assignedVeh = p.vehicleId
-          ? vehicleByIdMap.get(p.vehicleId.toString())
-          : vehicleByDriverMap.get(uidStr);
-        const vehicleName =
-          assignedVeh?.modelName?.trim() ||
-          p.vehicle?.model?.trim() ||
-          "No vehicle assigned";
+          const assignedVeh = p.vehicleId
+            ? vehicleByIdMap.get(p.vehicleId.toString())
+            : vehicleByDriverMap.get(uidStr);
+          const vehicleName =
+            assignedVeh?.modelName?.trim() ||
+            p.vehicle?.model?.trim() ||
+            "No vehicle assigned";
 
-        return {
-          id: uidStr,
-          initials,
-          name,
-          avatarUrl: u?.avatarUrl || "",
-          vehicle: vehicleName,
-          status: statusStr,
-          color,
-        };
+          return {
+            id: uidStr,
+            initials,
+            name,
+            avatarUrl: u?.avatarUrl || "",
+            vehicle: vehicleName,
+            status: statusStr,
+            isOnTheClock,
+            color,
+          };
+        });
+
+      // Sort: Online drivers first, then alphabetically by name
+      driverStatus.sort((a, b) => {
+        if (a.status === "Online" && b.status !== "Online") return -1;
+        if (a.status !== "Online" && b.status === "Online") return 1;
+        return a.name.localeCompare(b.name);
       });
 
       // Pending Ride Requests for Dashboard Card
@@ -808,7 +844,7 @@ export class AdminAnalyticsController {
           totalTrips: todayTripsCount,
           completedTrips: todayCompletedCount,
           pendingRequests: todayPendingCount,
-          activeDrivers: Math.max(activeDriversCount, todayDriversWithTrips.length),
+          activeDrivers: realTimeActiveDrivers,
           dateRangeLabel: "Today",
         },
         week: {
@@ -854,7 +890,7 @@ export class AdminAnalyticsController {
             cancelledTrips,
             rejectedTrips,
             activeTrips,
-            activeDrivers: activeDriversCount,
+            activeDrivers: realTimeActiveDrivers,
             onTripDrivers: onTripDriversCount,
             totalDrivers,
             totalPassengers,
