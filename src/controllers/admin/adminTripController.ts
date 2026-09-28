@@ -10,6 +10,7 @@ import { AuditLog } from "../../models/AuditLog.js";
 import { generateRecurringTripsForMaster } from "../../utils/recurringTripUtils.js";
 import { parseCentralDateTime, getCentralTodayStr, getCentralTomorrowStr, getCentralDayBounds } from "../../utils/dateUtils.js";
 import { resolveDriverProfile, syncDriverProfileWithApplication } from "./adminDriverUtils.js";
+import { getFortnightlyPeriods } from "../driverController.js";
 
 const createTripSchema = z.object({
   // Passenger Information
@@ -1026,6 +1027,48 @@ export class AdminTripController {
         ? completedChildTrips.reduce((sum: number, c: any) => sum + (typeof c.fare === "number" && !isNaN(c.fare) && c.fare > 0 ? c.fare : (typeof c.quotedFare === "number" && !isNaN(c.quotedFare) && c.quotedFare > 0 ? c.quotedFare : effectiveFare)), 0)
         : completedTripsCount * effectiveFare;
 
+      // Current Fortnight calculation
+      const availablePeriods = getFortnightlyPeriods();
+      const currentFortnight = availablePeriods[0];
+      const fnStartBounds = getCentralDayBounds(currentFortnight.startDate);
+      const fnEndBounds = getCentralDayBounds(currentFortnight.endDate);
+      const fnStart = fnStartBounds.start;
+      const fnEnd = fnEndBounds.end;
+
+      const isTripInCurrentFortnight = (t: any) => {
+        if (t.completedAt) {
+          const d = new Date(t.completedAt);
+          if (!isNaN(d.getTime())) return d >= fnStart && d <= fnEnd;
+        }
+        if (t.scheduledTime) {
+          const d = new Date(t.scheduledTime);
+          if (!isNaN(d.getTime())) return d >= fnStart && d <= fnEnd;
+        }
+        const dateStr = t.pickupDate || t.startDate;
+        if (typeof dateStr === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+          const cleanDate = dateStr.trim();
+          return cleanDate >= currentFortnight.startDate && cleanDate <= currentFortnight.endDate;
+        } else if (dateStr) {
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) return d >= fnStart && d <= fnEnd;
+        }
+        if (t.createdAt) {
+          const d = new Date(t.createdAt);
+          if (!isNaN(d.getTime())) return d >= fnStart && d <= fnEnd;
+        }
+        return false;
+      };
+
+      const fortnightCompletedChildTrips = completedChildTrips.filter(isTripInCurrentFortnight);
+      const fortnightCompletedChildCount = fortnightCompletedChildTrips.length;
+      const fortnightCompletedTripsCount = childTrips.length > 0
+        ? fortnightCompletedChildCount
+        : (trip.status === "COMPLETED" && isTripInCurrentFortnight(trip) ? (isRoundTrip ? 2 : 1) : 0);
+
+      const fortnightlyBillable = childTrips.length > 0 && fortnightCompletedChildCount > 0
+        ? fortnightCompletedChildTrips.reduce((sum: number, c: any) => sum + (typeof c.fare === "number" && !isNaN(c.fare) && c.fare > 0 ? c.fare : (typeof c.quotedFare === "number" && !isNaN(c.quotedFare) && c.quotedFare > 0 ? c.quotedFare : effectiveFare)), 0)
+        : fortnightCompletedTripsCount * effectiveFare;
+
       res.status(200).json({
         success: true,
         data: {
@@ -1035,6 +1078,14 @@ export class AdminTripController {
           auditLogs,
           completedTripsCount,
           billableFare,
+          fortnightlyBillable,
+          fortnightlyBillableFare: fortnightlyBillable,
+          fortnightCompletedTripsCount,
+          currentFortnight: {
+            startDate: currentFortnight.startDate,
+            endDate: currentFortnight.endDate,
+            label: currentFortnight.label,
+          },
         },
       });
     } catch (error) {
