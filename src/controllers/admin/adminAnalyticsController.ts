@@ -839,6 +839,85 @@ export class AdminAnalyticsController {
         year: yearRidePerf,
       };
 
+      // Calculate driver payroll for week, fortnight, month, year
+      const [yearShifts, yearCompletedDriverTrips] = await Promise.all([
+        DriverShift.find({
+          driverId: { $in: approvedUserIds },
+          startedAt: { $gte: startOfYear, $lte: endOfYear },
+        }).lean(),
+        Trip.find({
+          ...actualTripMatch,
+          status: "COMPLETED",
+          driverId: { $in: approvedUserIds },
+          $or: [
+            { completedAt: { $gte: startOfYear, $lte: endOfYear } },
+            { scheduledTime: { $gte: startOfYear, $lte: endOfYear } },
+            { createdAt: { $gte: startOfYear, $lte: endOfYear } },
+          ],
+        }).select("driverId completedAt scheduledTime createdAt fare quotedFare").lean(),
+      ]);
+
+      const computePayrollForPeriod = (pStart: Date, pEnd: Date) => {
+        const periodShifts = yearShifts.filter((s: any) => {
+          const d = new Date(s.startedAt);
+          return d >= pStart && d <= pEnd;
+        });
+
+        const shiftMinutesMap = new Map<string, number>();
+        for (const s of periodShifts) {
+          const dId = s.driverId.toString();
+          let mins = 0;
+          if (s.totalMinutes !== undefined && s.totalMinutes !== null) {
+            mins = s.totalMinutes;
+          } else if (s.startedAt && s.endedAt) {
+            mins = Math.max(0, Math.floor((new Date(s.endedAt).getTime() - new Date(s.startedAt).getTime()) / 60000));
+          } else if (s.startedAt && s.status === "IN_PROGRESS") {
+            mins = Math.max(0, Math.floor((Date.now() - new Date(s.startedAt).getTime()) / 60000));
+          }
+          shiftMinutesMap.set(dId, (shiftMinutesMap.get(dId) || 0) + mins);
+        }
+
+        const periodTrips = yearCompletedDriverTrips.filter((t: any) => {
+          const d = t.completedAt ? new Date(t.completedAt) : (t.scheduledTime ? new Date(t.scheduledTime) : new Date(t.createdAt));
+          return d >= pStart && d <= pEnd;
+        });
+
+        const tripCountMap = new Map<string, number>();
+        for (const t of periodTrips) {
+          if (t.driverId) {
+            const dId = (t.driverId._id || t.driverId).toString();
+            tripCountMap.set(dId, (tripCountMap.get(dId) || 0) + 1);
+          }
+        }
+
+        let totalPayroll = 0;
+        for (const p of allApprovedProfiles) {
+          const uidStr = p.userId.toString();
+          const hourlyRate = p.hourlyRate ?? 14.0;
+          const tripBonusRate = p.tripBonusRate ?? 3.0;
+
+          const totalMins = shiftMinutesMap.get(uidStr) || 0;
+          const clockedHours = totalMins / 60;
+          const completedTripsCount = tripCountMap.get(uidStr) || 0;
+
+          const regularWages = hourlyRate * clockedHours;
+          const tripBonus = completedTripsCount * tripBonusRate;
+          totalPayroll += (regularWages + tripBonus);
+        }
+
+        return Math.round(totalPayroll * 100) / 100;
+      };
+
+      const weeklyPayroll = computePayrollForPeriod(weekBounds.start, todayBounds.end);
+      const fortnightPayroll = computePayrollForPeriod(fortnightBounds.start, todayBounds.end);
+      const monthlyPayroll = computePayrollForPeriod(startOfMonth, endOfMonth);
+      const yearlyPayroll = computePayrollForPeriod(startOfYear, endOfYear);
+
+      const weeklyEarnings = Math.round((weeklyRevenue - weeklyPayroll) * 100) / 100;
+      const fortnightEarnings = Math.round((fortnightRevenue - fortnightPayroll) * 100) / 100;
+      const monthlyEarnings = Math.round((monthlyRevenue - monthlyPayroll) * 100) / 100;
+      const yearlyEarnings = Math.round((yearlyRevenue - yearlyPayroll) * 100) / 100;
+
       const periodMetrics = {
         today: {
           totalTrips: todayTripsCount,
@@ -901,7 +980,6 @@ export class AdminAnalyticsController {
           },
           periodMetrics,
           revenueSummary: {
-
             todayRevenue,
             weeklyRevenue,
             fortnightRevenue,
@@ -909,6 +987,36 @@ export class AdminAnalyticsController {
             yearlyRevenue,
             outstandingBalance: 0,
             avgRidePrice,
+            periods: {
+              week: {
+                revenue: weeklyRevenue,
+                payroll: weeklyPayroll,
+                earnings: weeklyEarnings,
+              },
+              fortnight: {
+                revenue: fortnightRevenue,
+                payroll: fortnightPayroll,
+                earnings: fortnightEarnings,
+              },
+              month: {
+                revenue: monthlyRevenue,
+                payroll: monthlyPayroll,
+                earnings: monthlyEarnings,
+              },
+              year: {
+                revenue: yearlyRevenue,
+                payroll: yearlyPayroll,
+                earnings: yearlyEarnings,
+              },
+            },
+            weeklyPayroll,
+            fortnightPayroll,
+            monthlyPayroll,
+            yearlyPayroll,
+            weeklyEarnings,
+            fortnightEarnings,
+            monthlyEarnings,
+            yearlyEarnings,
           },
           ridePerformance,
           monthlyRidePerformance,
