@@ -96,7 +96,8 @@ export function getFortnightlyPeriods(joinDate?: Date, count = 20): FortnightPer
 
   for (let i = 0; i < count; i++) {
     const pStart = new Date(anchorCurrentStart.getTime() - i * 14 * 24 * 60 * 60 * 1000);
-    const pEnd = new Date(pStart.getTime() + 14 * 24 * 60 * 60 * 1000);
+    // ponytail: 14 inclusive days Mon-Sun (offset +13 days) to eliminate double-counted boundary day
+    const pEnd = new Date(pStart.getTime() + 13 * 24 * 60 * 60 * 1000);
 
     // Stop generating past periods if the period end is before driver join date
     if (minJoinTime > 0 && pEnd.getTime() < minJoinTime && i > 0) {
@@ -117,7 +118,7 @@ export function getFortnightlyPeriods(joinDate?: Date, count = 20): FortnightPer
     const labelEnd = `${monthNames[pEnd.getUTCMonth()]} ${pEnd.getUTCDate()}, ${endY}`;
     const label = `${labelStart} – ${labelEnd}`;
 
-    const payDateObj = new Date(pEnd.getTime() + 4 * 24 * 60 * 60 * 1000);
+    const payDateObj = new Date(pEnd.getTime() + 5 * 24 * 60 * 60 * 1000);
     const expectedPayDate = `${monthNames[payDateObj.getUTCMonth()]} ${payDateObj.getUTCDate()}, ${payDateObj.getUTCFullYear()}`;
 
     const isCurrent = i === 0;
@@ -136,7 +137,7 @@ export function getFortnightlyPeriods(joinDate?: Date, count = 20): FortnightPer
 
   if (periods.length === 0) {
     const pStart = anchorCurrentStart;
-    const pEnd = new Date(pStart.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const pEnd = new Date(pStart.getTime() + 13 * 24 * 60 * 60 * 1000);
     const startY = pStart.getUTCFullYear();
     const startM = String(pStart.getUTCMonth() + 1).padStart(2, "0");
     const startD = String(pStart.getUTCDate()).padStart(2, "0");
@@ -145,7 +146,7 @@ export function getFortnightlyPeriods(joinDate?: Date, count = 20): FortnightPer
     const endD = String(pEnd.getUTCDate()).padStart(2, "0");
     const labelStart = `${monthNames[pStart.getUTCMonth()]} ${pStart.getUTCDate()}`;
     const labelEnd = `${monthNames[pEnd.getUTCMonth()]} ${pEnd.getUTCDate()}, ${endY}`;
-    const payDateObj = new Date(pEnd.getTime() + 4 * 24 * 60 * 60 * 1000);
+    const payDateObj = new Date(pEnd.getTime() + 5 * 24 * 60 * 60 * 1000);
 
     periods.push({
       id: `${startY}-${startM}-${startD}_${endY}-${endM}-${endD}`,
@@ -1133,7 +1134,7 @@ export class DriverController {
           const dE = new Date(qEnd);
           const labelStart = `${monthNames[dS.getUTCMonth()]} ${dS.getUTCDate()}`;
           const labelEnd = `${monthNames[dE.getUTCMonth()]} ${dE.getUTCDate()}, ${dE.getUTCFullYear()}`;
-          const payDateObj = new Date(dE.getTime() + 4 * 24 * 60 * 60 * 1000);
+          const payDateObj = new Date(dE.getTime() + 5 * 24 * 60 * 60 * 1000);
           const expectedPayDate = `${monthNames[payDateObj.getUTCMonth()]} ${payDateObj.getUTCDate()}, ${payDateObj.getUTCFullYear()}`;
 
           activePeriod = {

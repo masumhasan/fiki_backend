@@ -26,7 +26,7 @@ export class AdminEarningsController {
           const dE = new Date(qEnd);
           const labelStart = `${monthNames[dS.getUTCMonth()]} ${dS.getUTCDate()}`;
           const labelEnd = `${monthNames[dE.getUTCMonth()]} ${dE.getUTCDate()}, ${dE.getUTCFullYear()}`;
-          const payDateObj = new Date(dE.getTime() + 4 * 24 * 60 * 60 * 1000);
+          const payDateObj = new Date(dE.getTime() + 5 * 24 * 60 * 60 * 1000);
           activePeriod = {
             id: `${qStart}_${qEnd}`,
             startDate: qStart,
