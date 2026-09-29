@@ -92,20 +92,25 @@ const assignDriverSchema = z.object({
   driverId: z.string().nullable().optional(),
 });
 
-const sendQuoteSchema = z.object({
-  quotedFare: z.number().positive("Quoted fare must be a positive number"),
-  quoteNote: z.string().max(500).optional(),
-  quoteBreakdown: z
-    .object({
-      baseFare: z.number().optional(),
-      distance: z.number().optional(),
-      ratePerMile: z.number().optional(),
-      extraServices: z.number().optional(),
-      discount: z.number().optional(),
-      taxPercent: z.number().optional(),
-    })
-    .optional(),
-});
+const sendQuoteSchema = z
+  .object({
+    fare: z.number().positive("Fare must be a positive number").optional(),
+    quotedFare: z.number().positive("Quoted fare must be a positive number").optional(),
+    quoteNote: z.string().max(500).optional(),
+    quoteBreakdown: z
+      .object({
+        baseFare: z.number().optional(),
+        distance: z.number().optional(),
+        ratePerMile: z.number().optional(),
+        extraServices: z.number().optional(),
+        discount: z.number().optional(),
+        taxPercent: z.number().optional(),
+      })
+      .optional(),
+  })
+  .refine((data) => data.fare !== undefined || data.quotedFare !== undefined, {
+    message: "Fare or quoted fare must be provided",
+  });
 
 const respondToCounterOfferSchema = z.object({
   action: z.enum(["ACCEPT", "DECLINE"], {
@@ -1212,6 +1217,7 @@ export class AdminTripController {
 
       const previousStatus = masterTrip.status;
       const previousQuotedFare = masterTrip.quotedFare;
+      const previousFare = masterTrip.fare;
 
       // Find all child trips under this master request
       const childTrips = await Trip.find({ parentRequestId: masterId }).select("_id status quotedFare fare");
@@ -1230,8 +1236,12 @@ export class AdminTripController {
         return;
       }
 
-      // Update the master trip's quote information
-      masterTrip.quotedFare = parsed.data.quotedFare;
+      // ponytail: targetFare updates actual price (fare) as well as quotedFare
+      const targetFare = (parsed.data.fare !== undefined ? parsed.data.fare : parsed.data.quotedFare)!;
+
+      // Update the master trip's fare and quote information
+      masterTrip.fare = targetFare;
+      masterTrip.quotedFare = targetFare;
       masterTrip.quotedAt = new Date();
       if (parsed.data.quoteNote !== undefined) {
         masterTrip.quoteNote = parsed.data.quoteNote;
@@ -1245,18 +1255,14 @@ export class AdminTripController {
         masterTrip.status = "QUOTE_SENT";
       }
 
-      // If master trip was already accepted and has no child trips, sync fare too
-      if (totalChildTrips === 0 && (masterTrip.status === "ACCEPTED" || masterTrip.status === "QUOTE_ACCEPTED")) {
-        masterTrip.fare = parsed.data.quotedFare;
-      }
-
       await masterTrip.save();
 
       // Update future child legs ONLY (exclude COMPLETED and CANCELLED trips)
       let updatedFutureCount = 0;
       if (totalChildTrips > 0) {
         const childUpdateDoc: any = {
-          quotedFare: parsed.data.quotedFare,
+          fare: targetFare,
+          quotedFare: targetFare,
           quotedAt: new Date(),
         };
         if (parsed.data.quoteNote !== undefined) {
@@ -1268,11 +1274,6 @@ export class AdminTripController {
         // If master trip is QUOTE_SENT, propagate QUOTE_SENT to future legs
         if (masterTrip.status === "QUOTE_SENT") {
           childUpdateDoc.status = "QUOTE_SENT";
-        }
-        // If master trip is already operational (e.g. ACCEPTED, QUOTE_ACCEPTED, IN_PROGRESS),
-        // sync the active fare for future trips so billing and driver assignment reflect the new quote
-        if (["ACCEPTED", "QUOTE_ACCEPTED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED"].includes(masterTrip.status)) {
-          childUpdateDoc.fare = parsed.data.quotedFare;
         }
 
         const updateResult = await Trip.updateMany(
@@ -1288,12 +1289,13 @@ export class AdminTripController {
       await AuditLog.create({
         actor: new mongoose.Types.ObjectId(req.user!.userId),
         actorRole: req.user!.role,
-        action: previousQuotedFare ? "ADMIN_UPDATED_QUOTE" : "ADMIN_SENT_QUOTE",
+        action: previousFare || previousQuotedFare ? "ADMIN_UPDATED_FARE" : "ADMIN_SET_FARE",
         resourceType: "Trip",
         resourceId: masterTrip._id.toString(),
-        previousState: { status: previousStatus, quotedFare: previousQuotedFare },
+        previousState: { status: previousStatus, fare: previousFare, quotedFare: previousQuotedFare },
         newState: {
           status: masterTrip.status,
+          fare: masterTrip.fare,
           quotedFare: masterTrip.quotedFare,
           updatedFutureTrips: updatedFutureCount,
           completedTripsRetained: completedCount,
@@ -1306,6 +1308,7 @@ export class AdminTripController {
         data: {
           id: masterTrip._id.toString(),
           status: masterTrip.status,
+          fare: masterTrip.fare,
           quotedFare: masterTrip.quotedFare,
           quotedAt: masterTrip.quotedAt,
           quoteNote: masterTrip.quoteNote,
