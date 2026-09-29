@@ -800,26 +800,99 @@ export class AdminTripController {
       }
 
       Object.assign(trip, body);
+      if (trip.pickupTime && (trip.pickupDate || trip.startDate)) {
+        trip.scheduledTime = parseCentralDateTime(trip.pickupTime, trip.pickupDate || trip.startDate);
+      }
       await trip.save();
 
       if (trip.parentRequestId) {
-        // Single child trip updated
+        // Single child trip updated directly
+        if (trip.pickupTime && (trip.pickupDate || trip.startDate)) {
+          trip.scheduledTime = parseCentralDateTime(trip.pickupTime, trip.pickupDate || trip.startDate);
+          await trip.save();
+        }
       } else {
-        // Master request updated: sync child trips for operational fields only if they haven't started
-        await Trip.updateMany(
-          { parentRequestId: trip._id, status: { $in: ["REQUESTED", "QUOTE_SENT", "QUOTE_COUNTERED", "QUOTE_ACCEPTED", "ACCEPTED"] } },
-          {
-            fare: trip.fare,
-            driverNotes: trip.driverNotes,
-            specialInstructions: trip.specialInstructions,
-            mobilityOptions: trip.mobilityOptions,
-            returnPickupTime: trip.returnPickupTime,
-            returnPickupAddress: trip.returnPickupAddress,
-            returnDestinationAddress: trip.returnDestinationAddress,
+        // Master request updated:
+        // Regenerate future recurring or round trips if schedule or dates changed
+        await generateRecurringTripsForMaster(trip);
+
+        const outboundPickupAddress = trip.pickupLocation?.address || trip.streetAddress || body.pickupAddress || "";
+        const outboundDropoffAddress = trip.dropoffLocation?.address || body.destinationAddress || "";
+        const returnPickupAddr = trip.returnPickupAddress || outboundDropoffAddress || outboundPickupAddress;
+        const returnDropoffAddr = trip.returnDestinationAddress || outboundPickupAddress || outboundDropoffAddress;
+        const outboundTime = trip.pickupTime || "08:00 AM";
+        const returnTime = trip.returnPickupTime || "05:00 PM";
+
+        // Sync all non-completed child trips (including scheduled, requested, quote_accepted, driver_arriving, driver_arrived)
+        const uncompletedChildTrips = await Trip.find({
+          parentRequestId: trip._id,
+          status: { $nin: ["COMPLETED", "CANCELLED", "MISSED"] },
+        });
+
+        for (const child of uncompletedChildTrips) {
+          const isReturn = child.isReturnLeg === true || child.legType === "RETURN";
+
+          // Sync operational fields
+          child.fare = trip.fare;
+          child.quotedFare = trip.quotedFare;
+          child.driverNotes = trip.driverNotes;
+          child.specialInstructions = trip.specialInstructions;
+          child.mobilityOptions = trip.mobilityOptions;
+          child.accessInformation = trip.accessInformation;
+
+          if (isReturn) {
+            child.returnPickupTime = returnTime;
+            child.returnPickupAddress = returnPickupAddr;
+            child.returnDestinationAddress = returnDropoffAddr;
+            child.pickupLocation = {
+              address: returnPickupAddr,
+              coordinates: trip.dropoffLocation?.coordinates,
+            };
+            child.dropoffLocation = {
+              address: returnDropoffAddr,
+              coordinates: trip.pickupLocation?.coordinates,
+            };
+            child.pickupTime = returnTime;
+            if (trip.schedule === "one-time") {
+              const retDate = trip.endDate || trip.returnDate || trip.pickupDate || trip.startDate;
+              if (retDate) {
+                child.pickupDate = retDate;
+                child.startDate = retDate;
+                child.endDate = retDate;
+                child.returnDate = retDate;
+              }
+            }
+            if (child.pickupDate && child.pickupTime) {
+              child.scheduledTime = parseCentralDateTime(child.pickupTime, child.pickupDate);
+            }
+          } else {
+            // Outbound leg
+            child.pickupLocation = {
+              address: outboundPickupAddress,
+              coordinates: trip.pickupLocation?.coordinates,
+            };
+            child.dropoffLocation = {
+              address: outboundDropoffAddress,
+              coordinates: trip.dropoffLocation?.coordinates,
+            };
+            child.pickupTime = outboundTime;
+            if (trip.schedule === "one-time") {
+              const outDate = trip.startDate || trip.pickupDate;
+              if (outDate) {
+                child.pickupDate = outDate;
+                child.startDate = outDate;
+                child.endDate = outDate;
+              }
+            }
+            if (child.pickupDate && child.pickupTime) {
+              child.scheduledTime = parseCentralDateTime(child.pickupTime, child.pickupDate);
+            }
           }
-        );
-        
-        // Always sync passenger identity info to ALL child trips regardless of status
+
+          await child.save();
+        }
+
+        // Always sync passenger identity info to ALL child trips regardless of status (even completed ones)
         const passengerFieldsToSync: any = {};
         if (body.passengerAvatarUrl !== undefined) passengerFieldsToSync.passengerAvatarUrl = trip.passengerAvatarUrl;
         if (body.fullName !== undefined) passengerFieldsToSync.fullName = trip.fullName;
@@ -836,7 +909,6 @@ export class AdminTripController {
             { $set: passengerFieldsToSync }
           );
         }
-        await generateRecurringTripsForMaster(trip);
       }
 
       await AuditLog.create({
