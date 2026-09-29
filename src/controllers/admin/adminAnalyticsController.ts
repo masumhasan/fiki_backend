@@ -505,7 +505,8 @@ export class AdminAnalyticsController {
         return formatStatusCounts(res);
       };
 
-      const [statusWeek, statusFortnight, statusMonth, statusYear, statusAll] = await Promise.all([
+      const [statusDay, statusWeek, statusFortnight, statusMonth, statusYear, statusAll] = await Promise.all([
+        getStatusDistForRange(todayBounds.start, todayBounds.end),
         getStatusDistForRange(startOfPast7Days, endOfToday),
         getStatusDistForRange(startOfFortnight, endOfToday),
         getStatusDistForRange(startOfMonth, endOfMonth),
@@ -514,6 +515,7 @@ export class AdminAnalyticsController {
       ]);
 
       const statusDistribution = {
+        day: statusDay,
         week: statusWeek,
         fortnight: statusFortnight,
         month: statusMonth,
@@ -825,7 +827,18 @@ export class AdminAnalyticsController {
         completed: y.completed,
       }));
 
+      const todayRidePerf = [
+        {
+          label: "Today",
+          dateStr: todayStr,
+          requested: todayTripsCount,
+          completed: todayCompletedCount,
+          revenue: todayRevenue,
+        },
+      ];
+
       const revenueOverview = {
+        day: [{ label: "Today", dateStr: todayStr, revenue: todayRevenue, monthlyRevenue: todayRevenue, outstanding: 0 }],
         week: weekRidePerf.map((w) => ({ label: w.label, dateStr: w.dateStr, revenue: w.revenue, monthlyRevenue: w.revenue, outstanding: 0 })),
         fortnight: fortnightRidePerf.map((f) => ({ label: f.label, dateStr: f.dateStr, revenue: f.revenue, monthlyRevenue: f.revenue, outstanding: 0 })),
         month: monthRidePerf.map((m) => ({ label: m.label, revenue: m.revenue, monthlyRevenue: m.revenue, outstanding: 0 })),
@@ -833,6 +846,7 @@ export class AdminAnalyticsController {
       };
 
       const ridePerformance = {
+        day: todayRidePerf,
         week: weekRidePerf,
         fortnight: fortnightRidePerf,
         month: monthRidePerf,
@@ -908,17 +922,26 @@ export class AdminAnalyticsController {
         return Math.round(totalPayroll * 100) / 100;
       };
 
+      const todayPayroll = computePayrollForPeriod(todayBounds.start, todayBounds.end);
       const weeklyPayroll = computePayrollForPeriod(weekBounds.start, todayBounds.end);
       const fortnightPayroll = computePayrollForPeriod(fortnightBounds.start, todayBounds.end);
       const monthlyPayroll = computePayrollForPeriod(startOfMonth, endOfMonth);
       const yearlyPayroll = computePayrollForPeriod(startOfYear, endOfYear);
 
+      const todayEarnings = Math.round((todayRevenue - todayPayroll) * 100) / 100;
       const weeklyEarnings = Math.round((weeklyRevenue - weeklyPayroll) * 100) / 100;
       const fortnightEarnings = Math.round((fortnightRevenue - fortnightPayroll) * 100) / 100;
       const monthlyEarnings = Math.round((monthlyRevenue - monthlyPayroll) * 100) / 100;
       const yearlyEarnings = Math.round((yearlyRevenue - yearlyPayroll) * 100) / 100;
 
       const periodMetrics = {
+        day: {
+          totalTrips: todayTripsCount,
+          completedTrips: todayCompletedCount,
+          pendingRequests: todayPendingCount,
+          activeDrivers: realTimeActiveDrivers,
+          dateRangeLabel: "Today",
+        },
         today: {
           totalTrips: todayTripsCount,
           completedTrips: todayCompletedCount,
@@ -988,6 +1011,11 @@ export class AdminAnalyticsController {
             outstandingBalance: 0,
             avgRidePrice,
             periods: {
+              day: {
+                revenue: todayRevenue,
+                payroll: todayPayroll,
+                earnings: todayEarnings,
+              },
               week: {
                 revenue: weeklyRevenue,
                 payroll: weeklyPayroll,
@@ -1009,10 +1037,12 @@ export class AdminAnalyticsController {
                 earnings: yearlyEarnings,
               },
             },
+            todayPayroll,
             weeklyPayroll,
             fortnightPayroll,
             monthlyPayroll,
             yearlyPayroll,
+            todayEarnings,
             weeklyEarnings,
             fortnightEarnings,
             monthlyEarnings,
