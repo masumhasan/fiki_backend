@@ -256,9 +256,16 @@ export class AdminDriverController {
 
       // Current fortnightly period for calculating actual completed trips
       const currentFortnight = getFortnightlyPeriods()[0];
-      const fnStart = new Date(`${currentFortnight.startDate}T00:00:00.000Z`);
-      const fnEnd = new Date(`${currentFortnight.endDate}T23:59:59.999Z`);
+      const fnStartBounds = getCentralDayBounds(currentFortnight.startDate);
+      const fnEndBounds = getCentralDayBounds(currentFortnight.endDate);
+      const fnStart = fnStartBounds.start;
+      const fnEnd = fnEndBounds.end;
       const driverIds = driverUsers.map((u) => u._id);
+
+      // Exclude parent container requests whose child legs exist to avoid duplicate entries
+      const parentIdsWithChildren = await Trip.find({
+        parentRequestId: { $exists: true, $ne: null },
+      }).distinct("parentRequestId");
 
       const [fortnightCompletedAgg, totalCompletedAgg] = await Promise.all([
         Trip.aggregate([
@@ -266,7 +273,13 @@ export class AdminDriverController {
             $match: {
               driverId: { $in: driverIds },
               status: "COMPLETED",
-              createdAt: { $gte: fnStart, $lte: fnEnd },
+              _id: { $nin: parentIdsWithChildren },
+              $or: [
+                { completedAt: { $gte: fnStart, $lte: fnEnd } },
+                { scheduledTime: { $gte: fnStart, $lte: fnEnd } },
+                { pickupDate: { $gte: currentFortnight.startDate, $lte: currentFortnight.endDate } },
+                { createdAt: { $gte: fnStart, $lte: fnEnd } },
+              ],
             },
           },
           {
@@ -281,6 +294,7 @@ export class AdminDriverController {
             $match: {
               driverId: { $in: driverIds },
               status: "COMPLETED",
+              _id: { $nin: parentIdsWithChildren },
             },
           },
           {

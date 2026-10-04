@@ -1149,25 +1149,38 @@ export class DriverController {
         }
       }
 
-      const filterStart = new Date(`${activePeriod.startDate}T00:00:00.000Z`);
-      const filterEnd = new Date(`${activePeriod.endDate}T23:59:59.999Z`);
+      const startBounds = getCentralDayBounds(activePeriod.startDate);
+      const endBounds = getCentralDayBounds(activePeriod.endDate);
+      const filterStart = startBounds.start;
+      const filterEnd = endBounds.end;
 
       // Exclude master parent container requests when child legs exist
       const parentIdsWithChildren = await Trip.find({
         parentRequestId: { $exists: true, $ne: null },
       }).distinct("parentRequestId");
 
-      // Fetch completed trips and shifts in selected pay period in parallel
+      // Fetch completed trips and shifts in selected pay period in parallel matching admin portal criteria
       const [completedTrips, completedShifts] = await Promise.all([
         Trip.find({
-          driverId,
+          driverId: user?._id || driverId,
           status: "COMPLETED",
           _id: { $nin: parentIdsWithChildren },
-          createdAt: { $gte: filterStart, $lte: filterEnd },
-        }).sort({ createdAt: -1 }).lean(),
+          $or: [
+            { completedAt: { $gte: filterStart, $lte: filterEnd } },
+            { scheduledTime: { $gte: filterStart, $lte: filterEnd } },
+            { pickupDate: { $gte: activePeriod.startDate, $lte: activePeriod.endDate } },
+            { createdAt: { $gte: filterStart, $lte: filterEnd } },
+          ],
+        })
+          .populate("passengerId", "name")
+          .sort({ completedAt: -1, scheduledTime: -1, createdAt: -1 })
+          .lean(),
         DriverShift.find({
-          driverId,
-          startedAt: { $gte: filterStart, $lte: filterEnd },
+          driverId: user?._id || driverId,
+          $or: [
+            { startedAt: { $gte: filterStart, $lte: filterEnd } },
+            { endedAt: { $gte: filterStart, $lte: filterEnd } },
+          ],
         }).lean(),
       ]);
 
@@ -1213,14 +1226,36 @@ export class DriverController {
       const expectedPayDate = activePeriod.expectedPayDate;
 
       // Map rides for ride history
-      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       const rideHistory = completedTrips.map((t: any) => {
         const tripId = `TRP-${t._id.toString().substring(t._id.toString().length - 4).toUpperCase()}`;
         const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
         const pickup = t.pickupLocation?.address || "Pickup";
         const dropoff = t.dropoffLocation?.address || t.returnDestinationAddress || "Destination";
-        const d = new Date(t.createdAt);
-        const dateStr = `${monthNames[d.getUTCMonth()]} ${d.getUTCDate()}`;
+        
+        let dateStr = "—";
+        const rawDateStr = t.pickupDate || t.startDate;
+        if (rawDateStr && typeof rawDateStr === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawDateStr.trim())) {
+          const [y, m, d] = rawDateStr.trim().split("-").map(Number);
+          const noonUtc = new Date(Date.UTC(y, m - 1, d, 18, 0, 0));
+          dateStr = noonUtc.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            timeZone: CENTRAL_TZ,
+          });
+        } else {
+          const dateVal = t.completedAt || t.scheduledTime || t.createdAt;
+          if (dateVal) {
+            const d = new Date(dateVal);
+            if (!isNaN(d.getTime())) {
+              dateStr = d.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                timeZone: CENTRAL_TZ,
+              });
+            }
+          }
+        }
+
         return {
           date: dateStr,
           tripId,

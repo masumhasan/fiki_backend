@@ -80,7 +80,10 @@ export class AdminEarningsController {
         ]),
         DriverShift.find({
           driverId: { $in: userIds },
-          startedAt: { $gte: filterStart, $lte: filterEnd },
+          $or: [
+            { startedAt: { $gte: filterStart, $lte: filterEnd } },
+            { endedAt: { $gte: filterStart, $lte: filterEnd } },
+          ],
         }).lean(),
       ]);
 
@@ -115,7 +118,7 @@ export class AdminEarningsController {
         const totalMins = shiftMinutesMap.get(uidStr) || 0;
         const clockedHours = Number((totalMins / 60).toFixed(2));
 
-        const completedTrips = tripCountMap.get(uidStr) || p.completedTripsCount || 0;
+        const completedTrips = tripCountMap.get(uidStr) ?? 0;
         const tripBonus = Math.round((completedTrips * tripBonusRate) * 100) / 100;
         const regularWages = Math.round((hourlyRate * clockedHours) * 100) / 100;
         const grossEarnings = Math.round((regularWages + tripBonus) * 100) / 100;
