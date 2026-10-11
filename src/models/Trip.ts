@@ -102,6 +102,7 @@ export interface ITrip extends Document {
   insuranceName?: string;
   authNumber?: string;
   privatePay?: boolean;
+  memberId?: string;
 
   // Guardian Information
   guardianName?: string;
@@ -249,6 +250,7 @@ const tripSchema = new Schema<ITrip>(
     insuranceName: { type: String },
     authNumber: { type: String },
     privatePay: { type: Boolean },
+    memberId: { type: String },
 
     // Guardian Information
     guardianName: { type: String },

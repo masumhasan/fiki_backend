@@ -56,6 +56,7 @@ const createRideSchema = z.object({
   insuranceName: z.string().optional().or(z.null()),
   authNumber: z.string().optional().or(z.null()),
   privatePay: z.boolean().default(false),
+  memberId: z.string().optional().or(z.null()),
 
   // Guardian Information
   guardianName: z.string().optional().or(z.null()),

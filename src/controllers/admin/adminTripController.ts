@@ -62,6 +62,7 @@ const createTripSchema = z.object({
   insuranceName: z.string().optional().or(z.null()),
   authNumber: z.string().optional().or(z.null()),
   privatePay: z.boolean().default(false),
+  memberId: z.string().optional().or(z.null()),
 
   // Guardian Information
   guardianName: z.string().optional().or(z.null()),
@@ -798,6 +799,30 @@ export class AdminTripController {
         trip.returnDate = body.endDate;
         trip.recurringEndDate = body.endDate;
       }
+      if (body.insuranceName !== undefined) {
+        trip.insuranceName = body.insuranceName;
+      }
+      if (body.authNumber !== undefined) {
+        trip.authNumber = body.authNumber;
+      }
+      if (body.privatePay !== undefined) {
+        trip.privatePay = Boolean(body.privatePay);
+      }
+      if (body.memberId !== undefined) {
+        trip.memberId = body.memberId;
+      }
+      if (body.guardianName !== undefined) {
+        trip.guardianName = body.guardianName;
+      }
+      if (body.guardianPhone !== undefined) {
+        trip.guardianPhone = body.guardianPhone;
+      }
+      if (body.guardianEmail !== undefined) {
+        trip.guardianEmail = body.guardianEmail;
+      }
+      if (body.relationshipToPassenger !== undefined) {
+        trip.relationshipToPassenger = body.relationshipToPassenger;
+      }
 
       Object.assign(trip, body);
       if (trip.pickupTime && (trip.pickupDate || trip.startDate)) {
@@ -839,6 +864,14 @@ export class AdminTripController {
           child.specialInstructions = trip.specialInstructions;
           child.mobilityOptions = trip.mobilityOptions;
           child.accessInformation = trip.accessInformation;
+          child.insuranceName = trip.insuranceName;
+          child.authNumber = trip.authNumber;
+          child.privatePay = trip.privatePay;
+          child.memberId = trip.memberId;
+          child.guardianName = trip.guardianName;
+          child.guardianPhone = trip.guardianPhone;
+          child.guardianEmail = trip.guardianEmail;
+          child.relationshipToPassenger = trip.relationshipToPassenger;
 
           if (isReturn) {
             child.returnPickupTime = returnTime;
@@ -902,6 +935,14 @@ export class AdminTripController {
         if (body.emergencyContactName !== undefined) passengerFieldsToSync.emergencyContactName = trip.emergencyContactName;
         if (body.emergencyContactPhone !== undefined) passengerFieldsToSync.emergencyContactPhone = trip.emergencyContactPhone;
         if (body.relationship !== undefined) passengerFieldsToSync.relationship = trip.relationship;
+        if (body.insuranceName !== undefined) passengerFieldsToSync.insuranceName = trip.insuranceName;
+        if (body.authNumber !== undefined) passengerFieldsToSync.authNumber = trip.authNumber;
+        if (body.privatePay !== undefined) passengerFieldsToSync.privatePay = trip.privatePay;
+        if (body.memberId !== undefined) passengerFieldsToSync.memberId = trip.memberId;
+        if (body.guardianName !== undefined) passengerFieldsToSync.guardianName = trip.guardianName;
+        if (body.guardianPhone !== undefined) passengerFieldsToSync.guardianPhone = trip.guardianPhone;
+        if (body.guardianEmail !== undefined) passengerFieldsToSync.guardianEmail = trip.guardianEmail;
+        if (body.relationshipToPassenger !== undefined) passengerFieldsToSync.relationshipToPassenger = trip.relationshipToPassenger;
 
         if (Object.keys(passengerFieldsToSync).length > 0) {
           await Trip.updateMany(

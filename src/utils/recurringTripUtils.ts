@@ -94,6 +94,7 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
     insuranceName: masterTrip.insuranceName,
     authNumber: masterTrip.authNumber,
     privatePay: masterTrip.privatePay,
+    memberId: masterTrip.memberId,
     requestSource: masterTrip.requestSource,
     passengerAvatarUrl: masterTrip.passengerAvatarUrl,
     signature: masterTrip.signature,
