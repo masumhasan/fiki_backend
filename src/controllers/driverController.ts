@@ -12,6 +12,7 @@ import {
   getCentralDayFull,
   getCentralTodayStr,
   getCentralTomorrowStr,
+  getCentralWeekDays,
   parseCentralDateTime,
   calculateShiftDuration,
 } from "../utils/dateUtils.js";
@@ -449,11 +450,11 @@ export async function checkAndAutoEndActiveShift(driverId: string | mongoose.Typ
   }
 
   if (now.getTime() > sched.scheduledEndMs) {
-    // Do NOT auto-end if the driver still has active trips in progress.
-    // Drivers must be able to complete any ACCEPTED/en-route/pickup trips.
+    // Do NOT auto-end if the driver still has active trips underway (en route to pickup or dropping off passenger).
+    // Drivers must be able to complete any active pickup/dropoff trips even after shift time has passed.
     const activeTripCount = await Trip.countDocuments({
       driverId,
-      status: { $in: ["ACCEPTED", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
+      status: { $in: ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
     });
     if (activeTripCount > 0) {
       // Hold off auto-ending — driver is mid-trip
@@ -923,23 +924,70 @@ export class DriverController {
         }
       }
 
-      // Enforce that driver has an active shift started today before performing trip status updates
-      const todayStr = new Date().toISOString().split("T")[0];
-      const activeShift = await DriverShift.findOne({
-        driverId: req.user.userId,
-        shiftDate: todayStr,
-        status: "IN_PROGRESS",
-      });
+      // Shift validation:
+      // 1. If starting a new pickup (ACCEPTED -> DRIVER_ARRIVING):
+      //    Driver MUST have an active shift (status: IN_PROGRESS) AND cannot start outside their scheduled shift window.
+      // 2. If continuing or completing an underway trip (DRIVER_ARRIVED, IN_PROGRESS, COMPLETED, CANCELLED):
+      //    Driver can ALWAYS proceed and complete the trip even if scheduled shift time has passed or shift auto-ended.
+      const isStartingPickup = status === "DRIVER_ARRIVING";
+      const now = new Date();
 
-      if (!activeShift) {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: "SHIFT_NOT_STARTED",
-            message: "You must start your shift from the 'My Schedule & Attendance' page before performing trip actions or starting a pickup.",
-          },
-        });
-        return;
+      if (isStartingPickup) {
+        const activeShift = await DriverShift.findOne({
+          driverId: req.user.userId,
+          status: "IN_PROGRESS",
+        }).sort({ startedAt: -1 });
+
+        if (!activeShift) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: "SHIFT_NOT_STARTED",
+              message: "You must start your shift from the 'My Schedule & Attendance' page before performing trip actions or starting a pickup.",
+            },
+          });
+          return;
+        }
+
+        const driverProfile = await DriverProfile.findOne({ userId: req.user.userId }).lean();
+        const sched = resolveScheduleForDate(driverProfile, activeShift.shiftDate, now);
+
+        if (sched && sched.scheduledEndMs) {
+          const wasStartedAfterEnd = activeShift.startedAt && activeShift.startedAt.getTime() >= sched.scheduledEndMs;
+          if (!wasStartedAfterEnd && now.getTime() > sched.scheduledEndMs) {
+            res.status(403).json({
+              success: false,
+              error: {
+                code: "SHIFT_TIME_EXPIRED",
+                message: `Your scheduled shift ended at ${sched.endTime}. You cannot start a new trip outside your scheduled shift hours. Please contact dispatch.`,
+              },
+            });
+            return;
+          }
+        }
+      } else {
+        // Continuing or completing an in-flight trip:
+        // Allow as long as driver has an active shift OR a shift that started today / on the trip's date
+        const centralToday = getCentralTodayStr(now);
+        const driverShift = await DriverShift.findOne({
+          driverId: req.user.userId,
+          $or: [
+            { status: "IN_PROGRESS" },
+            { shiftDate: trip.pickupDate || centralToday },
+            { shiftDate: centralToday },
+          ],
+        }).sort({ startedAt: -1 });
+
+        if (!driverShift) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: "SHIFT_NOT_STARTED",
+              message: "You must start your shift from the 'My Schedule & Attendance' page before performing trip actions.",
+            },
+          });
+          return;
+        }
       }
 
 
@@ -1028,6 +1076,10 @@ export class DriverController {
         }
 
         await DriverProfile.findOneAndUpdate({ userId: req.user.userId }, updateObj);
+
+        // Check if active shift should now auto-end (if scheduled shift end time has passed and no underway trips remain)
+        const driverProfileForShift = await DriverProfile.findOne({ userId: req.user.userId }).lean();
+        await checkAndAutoEndActiveShift(req.user.userId, driverProfileForShift, statusNow);
       }
 
       res.status(200).json({
@@ -1402,23 +1454,11 @@ export class DriverController {
       const todayStr = getCentralTodayStr(now);
       const { start: todayStart, end: todayEnd } = getCentralDayBounds(todayStr, now);
 
-      // Start of current week (Monday) aligned with local date
-      const localTodayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const currentDayOfWeek = now.getDay();
-      const distanceToMon = (currentDayOfWeek + 6) % 7;
-      const startOfWeek = new Date(localTodayStart);
-      startOfWeek.setDate(startOfWeek.getDate() - distanceToMon);
-
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(endOfWeek.getDate() + 6);
-      endOfWeek.setHours(23, 59, 59, 999);
-
-      const weekDateStrs: string[] = [];
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(startOfWeek);
-        d.setDate(d.getDate() + i);
-        weekDateStrs.push(toDateStr(d));
-      }
+      // Start of current week (Monday) aligned with Central Time
+      const centralWeek = getCentralWeekDays(now);
+      const weekDateStrs = centralWeek.map((w) => w.dateStr);
+      const startOfWeek = getCentralDayBounds(weekDateStrs[0]).start;
+      const endOfWeek = getCentralDayBounds(weekDateStrs[6]).end;
 
       // Exclude master parent container requests when child legs exist
       const parentIdsWithChildren = await Trip.find({
@@ -1466,7 +1506,6 @@ export class DriverController {
       // Schedule config from DriverProfile
       const weeklyScheduleConfig = driverProfile?.weeklySchedule || [];
       const scheduleMapByDay = new Map(weeklyScheduleConfig.map((s: any) => [s.day, s]));
-      const dayAbbrKeys = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
       const getScheduleConfigForDate = (dateObj: Date, dateStr: string) => {
         // Check one-time changes first
@@ -1483,7 +1522,7 @@ export class DriverController {
           }
         }
 
-        const key = dayAbbrKeys[dateObj.getDay()];
+        const key = getCentralDayAbbr(dateObj);
         const cfg = scheduleMapByDay.get(key) as any;
         if (cfg) {
           const isWorking = cfg.working !== false;
@@ -1515,17 +1554,16 @@ export class DriverController {
         remaining: remainingTripsCount,
       };
 
-      // 2. Upcoming Schedule (Next 5 Days starting tomorrow)
-      const dayAbbrs = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+      // 2. Upcoming Schedule (Next 5 Days starting tomorrow in Central Time)
       const upcomingSchedule = [];
+      const [todayY, todayM, todayD] = todayStr.split("-").map(Number);
       for (let i = 1; i <= 5; i++) {
-        const d = new Date(localTodayStart);
-        d.setDate(d.getDate() + i);
-        const dStr = toDateStr(d);
+        const d = new Date(Date.UTC(todayY, todayM - 1, todayD + i, 12, 0, 0));
+        const dStr = getCentralTodayStr(d);
         const dayCfg = getScheduleConfigForDate(d, dStr);
         upcomingSchedule.push({
-          day: dayAbbrs[d.getDay()],
-          date: String(d.getDate()),
+          day: getCentralDayAbbr(d).toUpperCase(),
+          date: String(parseInt(dStr.split("-")[2], 10)),
           hours: dayCfg.hoursText,
           status: dayCfg.isWorking ? "Scheduled" : "Day Off",
         });
@@ -1546,11 +1584,12 @@ export class DriverController {
 
       const weeklySchedule = [];
       for (let i = 0; i < 7; i++) {
-        const d = new Date(startOfWeek);
-        d.setDate(d.getDate() + i);
-        const dateStr = toDateStr(d);
+        const dayInfo = centralWeek[i];
+        const dateStr = dayInfo.dateStr;
+        const d = dayInfo.date;
         const dayName = fullDayNames[i];
-        const formattedDate = `${monthShortNames[d.getMonth()]} ${d.getDate()}`;
+        const [, mStr, dayStr] = dateStr.split("-");
+        const formattedDate = `${monthShortNames[parseInt(mStr, 10) - 1]} ${parseInt(dayStr, 10)}`;
         const dayCfg = getScheduleConfigForDate(d, dateStr);
 
         const s = shiftMap.get(dateStr) as any;

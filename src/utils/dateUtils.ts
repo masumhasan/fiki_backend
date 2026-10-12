@@ -54,6 +54,30 @@ export function getCentralDayFull(date: Date = new Date()): string {
 }
 
 /**
+ * Get the 7 days of the current week (Monday through Sunday) in America/Chicago timezone.
+ * Returns an array of 7 objects with { dateStr: "YYYY-MM-DD", date: Date }.
+ */
+export function getCentralWeekDays(date: Date = new Date()): { dateStr: string; date: Date }[] {
+  const todayStr = getCentralTodayStr(date);
+  const [y, m, d] = todayStr.split("-").map(Number);
+  const dayAbbr = getCentralDayAbbr(date);
+  const dayIndexMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const dayIndex = dayIndexMap[dayAbbr] ?? 0;
+  const distanceToMon = (dayIndex + 6) % 7;
+
+  const result: { dateStr: string; date: Date }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const offset = i - distanceToMon;
+    const sampleUtc = new Date(Date.UTC(y, m - 1, d + offset, 12, 0, 0));
+    result.push({
+      dateStr: getCentralTodayStr(sampleUtc),
+      date: sampleUtc,
+    });
+  }
+  return result;
+}
+
+/**
  * Helper to determine if a date is in Daylight Saving Time for America/Chicago (CDT UTC-5 vs CST UTC-6).
  */
 export function isCentralDaylightTime(date: Date = new Date()): boolean {
