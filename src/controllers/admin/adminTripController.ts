@@ -1503,6 +1503,168 @@ export class AdminTripController {
       next(error);
     }
   }
+
+  async updateTripStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        res.status(400).json({ success: false, error: { code: "INVALID_ID", message: "Invalid trip ID format" } });
+        return;
+      }
+
+      const updateTripStatusSchema = z.object({
+        status: z.enum([
+          "REQUESTED",
+          "QUOTE_SENT",
+          "QUOTE_ACCEPTED",
+          "QUOTE_DENIED",
+          "QUOTE_COUNTERED",
+          "ACCEPTED",
+          "DRIVER_ARRIVING",
+          "DRIVER_ARRIVED",
+          "IN_PROGRESS",
+          "COMPLETED",
+          "CANCELLED",
+          "MISSED",
+        ]),
+        cancellationReason: z.string().optional().or(z.null()),
+        driverNotes: z.string().optional().or(z.null()),
+        note: z.string().optional().or(z.null()),
+      });
+
+      const parsed = updateTripStatusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(422).json({
+          success: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Invalid status or parameters",
+            details: parsed.error.flatten().fieldErrors,
+          },
+        });
+        return;
+      }
+
+      const { status, cancellationReason, driverNotes } = parsed.data;
+
+      const trip = await Trip.findById(id);
+      if (!trip) {
+        res.status(404).json({ success: false, error: { code: "TRIP_NOT_FOUND", message: "Trip not found" } });
+        return;
+      }
+
+      const previousStatus = trip.status;
+      const statusNow = new Date();
+
+      trip.status = status;
+
+      if (status === "ACCEPTED") {
+        if (!trip.acceptedAt) trip.acceptedAt = statusNow;
+      } else if (status === "DRIVER_ARRIVING") {
+        if (!trip.arrivingAt) trip.arrivingAt = statusNow;
+      } else if (status === "DRIVER_ARRIVED") {
+        if (!trip.arrivedAt) trip.arrivedAt = statusNow;
+      } else if (status === "IN_PROGRESS") {
+        if (!trip.inProgressAt) trip.inProgressAt = statusNow;
+        if (!trip.startedAt) trip.startedAt = statusNow;
+      } else if (status === "COMPLETED") {
+        if (!trip.completedAt) trip.completedAt = statusNow;
+      } else if (status === "CANCELLED") {
+        if (!trip.cancelledAt) trip.cancelledAt = statusNow;
+        if (cancellationReason) trip.cancellationReason = cancellationReason;
+        if (cancellationReason === "No Show Up" || cancellationReason === "NO_SHOW") {
+          trip.fare = 0;
+        }
+      } else if (status === "MISSED") {
+        if (!trip.cancelledAt) trip.cancelledAt = statusNow;
+        if (cancellationReason) trip.cancellationReason = cancellationReason;
+      }
+
+      if (driverNotes) {
+        trip.driverShiftNotes = driverNotes;
+      }
+
+      await trip.save();
+
+      // Handle driver availability and completed count if driver assigned
+      if (trip.driverId) {
+        if (status === "COMPLETED" && previousStatus !== "COMPLETED") {
+          await DriverProfile.findOneAndUpdate(
+            { userId: trip.driverId },
+            { 
+              availabilityStatus: "ONLINE",
+              $inc: { completedTripsCount: 1 } 
+            }
+          );
+        } else if (previousStatus === "COMPLETED" && status !== "COMPLETED") {
+          await DriverProfile.findOneAndUpdate(
+            { userId: trip.driverId, completedTripsCount: { $gt: 0 } },
+            { $inc: { completedTripsCount: -1 } }
+          );
+        } else if (status === "CANCELLED") {
+          await DriverProfile.findOneAndUpdate(
+            { userId: trip.driverId },
+            { availabilityStatus: "ONLINE" }
+          );
+        }
+      }
+
+      // If master request and status is CANCELLED or COMPLETED, cascade to incomplete child legs
+      if (!trip.parentRequestId) {
+        if (status === "CANCELLED") {
+          await Trip.updateMany(
+            { parentRequestId: trip._id, status: { $nin: ["COMPLETED", "CANCELLED"] } },
+            { $set: { status: "CANCELLED", cancelledAt: statusNow, cancellationReason: trip.cancellationReason || "Master request cancelled by admin" } }
+          );
+        } else if (status === "COMPLETED") {
+          await Trip.updateMany(
+            { parentRequestId: trip._id, status: { $nin: ["COMPLETED", "CANCELLED"] } },
+            { $set: { status: "COMPLETED", completedAt: statusNow } }
+          );
+        }
+      }
+
+      // If this trip is a child leg, update parent request status if all legs finished
+      if (trip.parentRequestId) {
+        const remainingIncomplete = await Trip.countDocuments({
+          parentRequestId: trip.parentRequestId,
+          status: { $nin: ["COMPLETED", "CANCELLED", "MISSED"] },
+        });
+
+        if (remainingIncomplete === 0) {
+          const anyCompleted = await Trip.exists({
+            parentRequestId: trip.parentRequestId,
+            status: "COMPLETED",
+          });
+          await Trip.findByIdAndUpdate(trip.parentRequestId, {
+            status: anyCompleted ? "COMPLETED" : "CANCELLED",
+            completedAt: anyCompleted ? new Date() : undefined,
+            cancelledAt: anyCompleted ? undefined : new Date(),
+          });
+        }
+      }
+
+      // Create Audit Log
+      await AuditLog.create({
+        actor: new mongoose.Types.ObjectId(req.user!.userId),
+        actorRole: req.user!.role,
+        action: "ADMIN_CHANGED_TRIP_STATUS",
+        resourceType: "Trip",
+        resourceId: trip._id.toString(),
+        previousState: { status: previousStatus },
+        newState: { status: trip.status, cancellationReason: trip.cancellationReason },
+        requestId: req.requestId,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: trip,
+        message: `Trip status updated from ${previousStatus} to ${trip.status}`,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const adminTripController = new AdminTripController();

@@ -85,6 +85,9 @@ export class AdminController {
   cancelTripAdmin = (req: Request, res: Response, next: NextFunction): Promise<void> =>
     adminTripController.cancelTripAdmin(req, res, next);
 
+  updateTripStatus = (req: Request, res: Response, next: NextFunction): Promise<void> =>
+    adminTripController.updateTripStatus(req, res, next);
+
   sendQuote = (req: Request, res: Response, next: NextFunction): Promise<void> =>
     adminTripController.sendQuote(req, res, next);
 
