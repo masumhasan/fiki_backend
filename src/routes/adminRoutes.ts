@@ -24,6 +24,7 @@ router.get("/trips", (req, res, next) => adminController.getTrips(req, res, next
 router.get("/trips/:id", (req, res, next) => adminController.getTripById(req, res, next));
 router.post("/trips", (req, res, next) => adminController.createTrip(req, res, next));
 router.put("/trips/:id", (req, res, next) => adminController.updateTrip(req, res, next));
+router.patch("/trips/:id", (req, res, next) => adminController.updateTrip(req, res, next));
 router.delete("/trips/:id", (req, res, next) => adminController.deleteTrip(req, res, next));
 router.post("/trips/:id/regenerate", (req, res, next) => adminController.regenerateTrips(req, res, next));
 router.post("/trips/:id/cancel", (req, res, next) => adminController.cancelTripAdmin(req, res, next));

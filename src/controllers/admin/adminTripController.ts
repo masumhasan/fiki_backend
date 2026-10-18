@@ -780,25 +780,107 @@ export class AdminTripController {
       const previousState = trip.toObject();
       const body = req.body || {};
 
-      if (body.pickupAddress) {
-        trip.pickupLocation = { address: body.pickupAddress };
+      // Location Updates (Pickup & Drop-off)
+      if (body.pickupAddress || body.pickupLocation?.address) {
+        const pickupAddr = body.pickupAddress || body.pickupLocation?.address;
+        trip.pickupLocation = {
+          address: pickupAddr,
+          coordinates: body.pickupLocation?.coordinates || trip.pickupLocation?.coordinates,
+        };
+        trip.streetAddress = pickupAddr;
+        if (trip.isReturnLeg || trip.legType === "RETURN") {
+          trip.returnPickupAddress = pickupAddr;
+        }
       }
-      if (body.destinationAddress) {
-        trip.dropoffLocation = { address: body.destinationAddress };
+
+      if (body.destinationAddress || body.dropoffAddress || body.dropoffLocation?.address) {
+        const dropAddr = body.destinationAddress || body.dropoffAddress || body.dropoffLocation?.address;
+        trip.dropoffLocation = {
+          address: dropAddr,
+          coordinates: body.dropoffLocation?.coordinates || trip.dropoffLocation?.coordinates,
+        };
+        if (trip.isReturnLeg || trip.legType === "RETURN") {
+          trip.returnDestinationAddress = dropAddr;
+        }
       }
-      if (body.passengerAvatarUrl !== undefined) {
-        trip.passengerAvatarUrl = body.passengerAvatarUrl;
-      }
-      if (body.startDate) {
+
+      // Date Updates (Pickup Date & Return / End Date)
+      if (body.pickupDate) {
+        trip.pickupDate = body.pickupDate;
+        trip.startDate = body.pickupDate;
+        trip.recurringStartDate = body.pickupDate;
+      } else if (body.startDate) {
         trip.startDate = body.startDate;
         trip.pickupDate = body.startDate;
         trip.recurringStartDate = body.startDate;
       }
+
       if (body.endDate) {
         trip.endDate = body.endDate;
         trip.returnDate = body.endDate;
         trip.recurringEndDate = body.endDate;
+      } else if (body.returnDate) {
+        trip.returnDate = body.returnDate;
+        trip.endDate = body.returnDate;
+        trip.recurringEndDate = body.returnDate;
       }
+
+      // Time Updates
+      if (body.pickupTime !== undefined) {
+        trip.pickupTime = body.pickupTime;
+        if (trip.isReturnLeg || trip.legType === "RETURN") {
+          trip.returnPickupTime = body.pickupTime;
+        }
+      }
+
+      if (body.appointmentTime !== undefined) {
+        trip.appointmentTime = body.appointmentTime;
+      }
+
+      // Fare & Pricing
+      if (body.fare !== undefined) {
+        const fareNum = Number(body.fare);
+        if (!isNaN(fareNum)) {
+          trip.fare = fareNum;
+          trip.quotedFare = fareNum;
+        }
+      } else if (body.quotedFare !== undefined) {
+        const fareNum = Number(body.quotedFare);
+        if (!isNaN(fareNum)) {
+          trip.fare = fareNum;
+          trip.quotedFare = fareNum;
+        }
+      }
+
+      // Notes & Special Instructions
+      if (body.driverNotes !== undefined) {
+        trip.driverNotes = body.driverNotes;
+      }
+      if (body.specialInstructions !== undefined) {
+        trip.specialInstructions = body.specialInstructions;
+      }
+      if (body.accessInformation !== undefined) {
+        trip.accessInformation = body.accessInformation;
+      }
+      if (body.mobilityOptions !== undefined) {
+        trip.mobilityOptions = body.mobilityOptions;
+      }
+
+      // Passenger Details
+      if (body.fullName !== undefined) {
+        trip.fullName = body.fullName;
+      }
+      if (body.phoneNumber !== undefined) {
+        trip.phoneNumber = body.phoneNumber;
+      }
+      if (body.email !== undefined) {
+        trip.email = body.email;
+      }
+      if (body.passengerAvatarUrl !== undefined) {
+        trip.passengerAvatarUrl = body.passengerAvatarUrl;
+      }
+
+      // Insurance & Payment
       if (body.insuranceName !== undefined) {
         trip.insuranceName = body.insuranceName;
       }
@@ -824,7 +906,7 @@ export class AdminTripController {
         trip.relationshipToPassenger = body.relationshipToPassenger;
       }
 
-      Object.assign(trip, body);
+      // Recalculate scheduledTime Date in Central Time
       if (trip.pickupTime && (trip.pickupDate || trip.startDate)) {
         trip.scheduledTime = parseCentralDateTime(trip.pickupTime, trip.pickupDate || trip.startDate);
       }
@@ -963,7 +1045,27 @@ export class AdminTripController {
         requestId: req.requestId,
       });
 
-      res.status(200).json({ success: true, data: trip });
+      // Populate passenger, driver, and driverProfile for immediate UI rendering
+      const populatedTrip = await Trip.findById(trip._id)
+        .populate("passengerId", "name email phone avatarUrl fullName")
+        .populate("driverId", "name email phone avatarUrl")
+        .lean();
+
+      let driverProfile = null;
+      if (populatedTrip?.driverId) {
+        const driverObjId = (populatedTrip.driverId as any)._id || populatedTrip.driverId;
+        driverProfile = await DriverProfile.findOne({ userId: driverObjId })
+          .select("vehicle availabilityStatus")
+          .lean();
+      }
+
+      res.status(200).json({
+        success: true,
+        data: {
+          ...populatedTrip,
+          driverProfile,
+        },
+      });
     } catch (error) {
       next(error);
     }
