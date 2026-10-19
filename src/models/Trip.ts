@@ -314,4 +314,29 @@ tripSchema.pre("save", async function () {
   }
 });
 
+// Safety Net: Guarantee all associated child trips are cascade-deleted whenever a master ride request is deleted
+tripSchema.post("findOneAndDelete", async function (doc: any) {
+  if (doc && !doc.parentRequestId) {
+    const parentId = doc._id;
+    await mongoose.model("Trip").deleteMany({
+      $or: [
+        { parentRequestId: parentId },
+        { parentRequestId: parentId.toString() },
+      ],
+    });
+  }
+});
+
+tripSchema.post("deleteOne", { document: true, query: false }, async function () {
+  if (!this.parentRequestId) {
+    const parentId = this._id;
+    await mongoose.model("Trip").deleteMany({
+      $or: [
+        { parentRequestId: parentId },
+        { parentRequestId: parentId.toString() },
+      ],
+    });
+  }
+});
+
 export const Trip = mongoose.model<ITrip>("Trip", tripSchema);

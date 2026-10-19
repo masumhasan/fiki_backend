@@ -220,6 +220,17 @@ export class AdminTripController {
         const parentIdsWithChildren = await Trip.find({ parentRequestId: { $exists: true, $ne: null } }).distinct("parentRequestId");
         if (parentIdsWithChildren.length > 0) {
           baseFilter._id = { $nin: parentIdsWithChildren };
+          
+          // Safety guard: guarantee orphaned child trips whose parent was deleted never appear
+          const existingParents = await Trip.find({ _id: { $in: parentIdsWithChildren } }).distinct("_id");
+          const existingParentSet = new Set(existingParents.map((pid: any) => pid.toString()));
+          const orphanedParentIds = parentIdsWithChildren.filter((pid: any) => pid && !existingParentSet.has(pid.toString()));
+          if (orphanedParentIds.length > 0) {
+            baseFilter.parentRequestId = { $nin: orphanedParentIds };
+            Trip.deleteMany({ parentRequestId: { $in: orphanedParentIds } }).catch((err) =>
+              console.error("Self-healing cleanup of orphaned trips failed:", err)
+            );
+          }
         }
       } else if (type === "live") {
         baseFilter.status = "IN_PROGRESS";
@@ -1094,6 +1105,7 @@ export class AdminTripController {
           $or: [
             { _id: masterIdObj },
             { parentRequestId: masterIdObj },
+            { parentRequestId: masterIdObj.toString() },
             { _id: targetIdObj },
           ],
         });
@@ -1101,11 +1113,12 @@ export class AdminTripController {
         // Individual trip belonging to a ride request: delete ONLY this specific trip
         await Trip.findByIdAndDelete(targetIdObj);
       } else {
-        // Master request: delete the request and its generated child trips
+        // Master request: delete the request and ALL its generated child trips
         await Trip.deleteMany({
           $or: [
             { _id: targetIdObj },
             { parentRequestId: targetIdObj },
+            { parentRequestId: targetIdObj.toString() },
           ],
         });
       }
