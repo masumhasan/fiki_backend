@@ -1206,25 +1206,30 @@ export class AdminTripController {
         return;
       }
 
+      // Fetch parent ride request if this trip is a child trip
+      let parentRequest: any = null;
+      if (trip.parentRequestId) {
+        parentRequest = await Trip.findById(trip.parentRequestId)
+          .select("_id fullName tripType schedule startDate endDate pickupDate pickupTime recurringDays createdAt status fare quotedFare signature signatureDate printedName relationshipToPassenger consentPhoto consentTransport consentEsignature consentHipaa guardianName guardianPhone guardianEmail caseManagerName caseManagerPhone caseManagerEmail")
+          .lean();
+      }
+
       // If viewing a child leg that was generated without signature, inherit from parent request
-      if (trip.parentRequestId && (!trip.signature || !trip.printedName)) {
-        const parent = await Trip.findById(trip.parentRequestId).lean();
-        if (parent) {
-          trip.signature = trip.signature || parent.signature;
-          trip.signatureDate = trip.signatureDate || parent.signatureDate;
-          trip.printedName = trip.printedName || parent.printedName;
-          trip.relationshipToPassenger = trip.relationshipToPassenger || parent.relationshipToPassenger;
-          if (trip.consentPhoto === undefined) trip.consentPhoto = parent.consentPhoto;
-          if (trip.consentTransport === undefined) trip.consentTransport = parent.consentTransport;
-          if (trip.consentEsignature === undefined) trip.consentEsignature = parent.consentEsignature;
-          if (trip.consentHipaa === undefined) trip.consentHipaa = parent.consentHipaa;
-          if (!trip.guardianName) trip.guardianName = parent.guardianName;
-          if (!trip.guardianPhone) trip.guardianPhone = parent.guardianPhone;
-          if (!trip.guardianEmail) trip.guardianEmail = parent.guardianEmail;
-          if (!trip.caseManagerName) trip.caseManagerName = parent.caseManagerName;
-          if (!trip.caseManagerPhone) trip.caseManagerPhone = parent.caseManagerPhone;
-          if (!trip.caseManagerEmail) trip.caseManagerEmail = parent.caseManagerEmail;
-        }
+      if (parentRequest && (!trip.signature || !trip.printedName)) {
+        trip.signature = trip.signature || parentRequest.signature;
+        trip.signatureDate = trip.signatureDate || parentRequest.signatureDate;
+        trip.printedName = trip.printedName || parentRequest.printedName;
+        trip.relationshipToPassenger = trip.relationshipToPassenger || parentRequest.relationshipToPassenger;
+        if (trip.consentPhoto === undefined) trip.consentPhoto = parentRequest.consentPhoto;
+        if (trip.consentTransport === undefined) trip.consentTransport = parentRequest.consentTransport;
+        if (trip.consentEsignature === undefined) trip.consentEsignature = parentRequest.consentEsignature;
+        if (trip.consentHipaa === undefined) trip.consentHipaa = parentRequest.consentHipaa;
+        if (!trip.guardianName) trip.guardianName = parentRequest.guardianName;
+        if (!trip.guardianPhone) trip.guardianPhone = parentRequest.guardianPhone;
+        if (!trip.guardianEmail) trip.guardianEmail = parentRequest.guardianEmail;
+        if (!trip.caseManagerName) trip.caseManagerName = parentRequest.caseManagerName;
+        if (!trip.caseManagerPhone) trip.caseManagerPhone = parentRequest.caseManagerPhone;
+        if (!trip.caseManagerEmail) trip.caseManagerEmail = parentRequest.caseManagerEmail;
       }
 
       // Fetch child legs if this is a master request or has child legs
@@ -1306,6 +1311,7 @@ export class AdminTripController {
         success: true,
         data: {
           ...trip,
+          parentRequest,
           childTrips,
           driverProfile,
           auditLogs,
