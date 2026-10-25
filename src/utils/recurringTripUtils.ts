@@ -29,6 +29,18 @@ export function extractRecurringDays(raw: any): string[] {
   return [];
 }
 
+export function normalizeDateStr(dateStr?: any): string {
+  if (!dateStr) return "";
+  let s = String(dateStr).trim();
+  // Handle 2-digit years or zero-padded years like "0026-11-01" -> "2026-11-01"
+  if (/^00\d{2}-\d{2}-\d{2}/.test(s)) {
+    s = "20" + s.substring(2);
+  } else if (/^\d{2}-\d{2}-\d{2}/.test(s)) {
+    s = "20" + s;
+  }
+  return s;
+}
+
 export async function generateRecurringTripsForMaster(masterTrip: any): Promise<{
   generatedCount: number;
   isMasterExecutable: boolean;
@@ -49,8 +61,23 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
     masterTrip.tripType === "round_trip" ||
     masterTrip.isRoundTrip === true;
 
-  const startDateStr = masterTrip.startDate || masterTrip.pickupDate || masterTrip.recurringStartDate;
-  const endDateStr = masterTrip.endDate || masterTrip.returnDate || masterTrip.recurringEndDate || startDateStr;
+  const rawStart = masterTrip.startDate || masterTrip.pickupDate || masterTrip.recurringStartDate;
+  const rawEnd = masterTrip.endDate || masterTrip.returnDate || masterTrip.recurringEndDate || rawStart;
+
+  const startDateStr = normalizeDateStr(rawStart);
+  const endDateStr = normalizeDateStr(rawEnd);
+
+  // Auto-correct any corrupted dates on the master document if needed
+  if (masterTrip.endDate && normalizeDateStr(masterTrip.endDate) !== masterTrip.endDate) {
+    await Trip.findByIdAndUpdate(masterTrip._id, {
+      $set: {
+        startDate: startDateStr,
+        endDate: endDateStr,
+        returnDate: endDateStr,
+        recurringEndDate: endDateStr,
+      },
+    });
+  }
 
   if (!startDateStr) return;
 
@@ -288,13 +315,15 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
   // =========================================================================
   const parseDateParts = (str: any): { year: number; month: number; day: number } | null => {
     if (!str) return null;
-    const raw = String(str).trim();
+    const raw = normalizeDateStr(str);
 
     // 1. If string starts with YYYY-MM-DD
     const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
     if (match) {
+      let year = parseInt(match[1], 10);
+      if (year < 100) year += 2000;
       return {
-        year: parseInt(match[1], 10),
+        year,
         month: parseInt(match[2], 10),
         day: parseInt(match[3], 10),
       };
@@ -311,7 +340,8 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
       day: "2-digit",
     }).formatToParts(d);
 
-    const year = parseInt(parts.find((p) => p.type === "year")?.value || "0", 10);
+    let year = parseInt(parts.find((p) => p.type === "year")?.value || "0", 10);
+    if (year < 100) year += 2000;
     const month = parseInt(parts.find((p) => p.type === "month")?.value || "0", 10);
     const day = parseInt(parts.find((p) => p.type === "day")?.value || "0", 10);
 
