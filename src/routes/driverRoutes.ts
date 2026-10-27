@@ -24,6 +24,8 @@ router.get("/me/shifts/today", (req, res, next) => driverController.getTodayShif
 router.get("/me/schedule-summary", (req, res, next) => driverController.getScheduleSummary(req, res, next));
 router.post("/me/shifts/start", (req, res, next) => driverController.startShift(req, res, next));
 router.post("/me/shifts/end", (req, res, next) => driverController.endShift(req, res, next));
+router.post("/me/shifts/report", (req, res, next) => driverController.endShift(req, res, next));
+router.post("/me/shifts/end-report", (req, res, next) => driverController.endShift(req, res, next));
 
 export default router;
 
