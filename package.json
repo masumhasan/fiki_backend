@@ -4,9 +4,9 @@
   "description": "Fiki Transit Backend API",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "dev": "node init && tsx watch src/server.ts",
+    "build": "node init && tsc",
+    "start": "node init && node dist/server.js",
     "seed": "tsx src/scripts/seed.ts",
     "migrate-base64": "tsx scripts/migrate_base64_to_s3.ts",
     "migrate-localhost": "tsx scripts/migrate_localhost_to_s3.ts",

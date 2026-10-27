@@ -67,6 +67,12 @@ export class FleetController {
         const endTimeStr = s.endedAt ? new Date(s.endedAt).toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit" }) : "—";
         const shiftTimeText = s.status === "COMPLETED" ? `${startTimeStr} – ${endTimeStr}` : `Started at ${startTimeStr}`;
 
+        const reportStatus = s.pendingEndReport
+          ? "Missing report"
+          : s.status === "COMPLETED"
+            ? "Completed"
+            : "In progress";
+
         return {
           id: s._id.toString(),
           shiftId: `VR-S-${s._id.toString().substring(s._id.toString().length - 4).toUpperCase()}`,
@@ -79,7 +85,9 @@ export class FleetController {
           vehicleNumber,
           shiftTimeText,
           shiftDateText: dateStr,
-          status: s.status === "COMPLETED" ? "Completed" : "In progress",
+          status: reportStatus,
+          autoEnded: Boolean(s.autoEnded),
+          pendingEndReport: Boolean(s.pendingEndReport),
           startingOdometer: s.startingOdometer,
           endingOdometer: s.endingOdometer || null,
           estimatedMiles: s.estimatedMiles || (s.endingOdometer ? s.endingOdometer - s.startingOdometer : 0),
@@ -163,6 +171,12 @@ export class FleetController {
       const endTimeStr = shift.endedAt ? new Date(shift.endedAt).toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "2-digit", minute: "2-digit" }) : "—";
       const shiftTimeText = shift.status === "COMPLETED" ? `${startTimeStr} – ${endTimeStr}` : `Started at ${startTimeStr}`;
 
+      const reportStatus = shift.pendingEndReport
+        ? "Missing report"
+        : shift.status === "COMPLETED"
+          ? "Completed"
+          : "In progress";
+
       res.status(200).json({
         success: true,
         data: {
@@ -179,7 +193,9 @@ export class FleetController {
           startTimeStr,
           endTimeStr,
           shiftDateText: dateStr,
-          status: shift.status === "COMPLETED" ? "Completed" : "In progress",
+          status: reportStatus,
+          autoEnded: Boolean(shift.autoEnded),
+          pendingEndReport: Boolean(shift.pendingEndReport),
           startingOdometer: shift.startingOdometer,
           endingOdometer: shift.endingOdometer || null,
           estimatedMiles: shift.estimatedMiles || (shift.endingOdometer ? shift.endingOdometer - shift.startingOdometer : 0),

@@ -461,6 +461,32 @@ export async function checkAndAutoEndActiveShift(driverId: string | mongoose.Typ
       return activeShift;
     }
 
+    // Do NOT auto-end if driver still has scheduled incomplete trips assigned for today
+    const todayStr = getCentralTodayStr(now);
+    const { start: todayStart, end: todayEnd } = getCentralDayBounds(todayStr, now);
+    const parentIdsWithChildren = await Trip.find({
+      parentRequestId: { $exists: true, $ne: null },
+    }).distinct("parentRequestId");
+
+    const remainingTripsCount = await Trip.countDocuments({
+      driverId,
+      _id: { $nin: parentIdsWithChildren },
+      status: { $nin: ["COMPLETED", "CANCELLED", "QUOTE_DENIED", "REJECTED"] },
+      $or: [
+        { pickupDate: todayStr },
+        {
+          $and: [
+            { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+            { $or: [{ startDate: todayStr }, { createdAt: { $gte: todayStart, $lt: todayEnd } }] }
+          ]
+        }
+      ]
+    });
+    if (remainingTripsCount > 0) {
+      // Hold off auto-ending — driver still has trips to complete today
+      return activeShift;
+    }
+
     const scheduledEndDate = new Date(sched.scheduledEndMs);
     const diffMs = Math.max(0, now.getTime() - activeShift.startedAt.getTime());
     const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
@@ -1051,6 +1077,10 @@ export class DriverController {
       await trip.save();
 
       // If completed or cancelled, free up the driver availability
+      let shiftAutoEnded = false;
+      let pendingEndReport = false;
+      let isFinalTrip = false;
+
       if (status === "COMPLETED" || status === "CANCELLED") {
         const updateObj: Record<string, unknown> = { availabilityStatus: "ONLINE" };
         if (status === "COMPLETED") {
@@ -1075,16 +1105,74 @@ export class DriverController {
           }
         }
 
+        // Check if this was the driver's final trip of the day
+        if (status === "COMPLETED") {
+          const todayStr = getCentralTodayStr(statusNow);
+          const { start: todayStart, end: todayEnd } = getCentralDayBounds(todayStr, statusNow);
+          const parentIdsWithChildren = await Trip.find({
+            parentRequestId: { $exists: true, $ne: null },
+          }).distinct("parentRequestId");
+
+          const remainingTripsCount = await Trip.countDocuments({
+            driverId: req.user.userId,
+            _id: { $ne: trip._id, $nin: parentIdsWithChildren },
+            status: { $nin: ["COMPLETED", "CANCELLED", "QUOTE_DENIED", "REJECTED"] },
+            $or: [
+              { pickupDate: todayStr },
+              {
+                $and: [
+                  { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
+                  { $or: [{ startDate: todayStr }, { createdAt: { $gte: todayStart, $lt: todayEnd } }] }
+                ]
+              }
+            ]
+          });
+
+          if (remainingTripsCount === 0) {
+            isFinalTrip = true;
+            // Auto-end the shift after the final trip
+            const activeShift = await DriverShift.findOne({
+              driverId: req.user.userId,
+              status: "IN_PROGRESS",
+            });
+
+            if (activeShift) {
+              const diffMs = Math.max(0, statusNow.getTime() - activeShift.startedAt.getTime());
+              const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
+              const hours = Math.floor(totalMinutes / 60);
+              const mins = totalMinutes % 60;
+              const totalHoursText = `${hours}h ${mins < 10 ? "0" : ""}${mins}m`;
+
+              activeShift.status = "COMPLETED";
+              activeShift.endedAt = statusNow;
+              activeShift.totalMinutes = totalMinutes;
+              activeShift.totalHoursText = totalHoursText;
+              activeShift.autoEnded = true;
+              activeShift.pendingEndReport = true;
+              await activeShift.save();
+
+              updateObj.availabilityStatus = "OFFLINE";
+              shiftAutoEnded = true;
+              pendingEndReport = true;
+            }
+          }
+        }
+
         await DriverProfile.findOneAndUpdate({ userId: req.user.userId }, updateObj);
 
         // Check if active shift should now auto-end (if scheduled shift end time has passed and no underway trips remain)
-        const driverProfileForShift = await DriverProfile.findOne({ userId: req.user.userId }).lean();
-        await checkAndAutoEndActiveShift(req.user.userId, driverProfileForShift, statusNow);
+        if (!shiftAutoEnded) {
+          const driverProfileForShift = await DriverProfile.findOne({ userId: req.user.userId }).lean();
+          await checkAndAutoEndActiveShift(req.user.userId, driverProfileForShift, statusNow);
+        }
       }
 
       res.status(200).json({
         success: true,
         data: trip,
+        shiftAutoEnded,
+        pendingEndReport,
+        isFinalTrip,
       });
     } catch (error) {
       next(error);
@@ -1410,7 +1498,11 @@ export class DriverController {
 
       const pendingEndReportShift = await DriverShift.findOne({
         driverId: req.user.userId,
-        pendingEndReport: true,
+        $or: [
+          { pendingEndReport: true },
+          { status: "COMPLETED", endingOdometer: { $exists: false } },
+          { status: "COMPLETED", endingOdometer: null },
+        ],
       }).sort({ createdAt: -1 }).lean();
 
       const shiftData = shift ? { ...shift, todayScheduleHours } : { todayScheduleHours, status: null };
@@ -1503,7 +1595,11 @@ export class DriverController {
 
         DriverShift.findOne({
           driverId,
-          pendingEndReport: true,
+          $or: [
+            { pendingEndReport: true },
+            { status: "COMPLETED", endingOdometer: { $exists: false } },
+            { status: "COMPLETED", endingOdometer: null },
+          ],
         }).sort({ createdAt: -1 }).lean()
       ]);
 
@@ -1710,11 +1806,15 @@ export class DriverController {
         return;
       }
 
-      // Check if driver has a pending end shift report from auto-ended shift
+      // Check if driver has a pending end shift report from auto-ended shift or incomplete previous shift
       const pendingReport = await DriverShift.findOne({
         driverId: req.user.userId,
-        pendingEndReport: true,
-      });
+        $or: [
+          { pendingEndReport: true },
+          { status: "COMPLETED", endingOdometer: { $exists: false } },
+          { status: "COMPLETED", endingOdometer: null },
+        ],
+      }).sort({ createdAt: -1 });
 
       if (pendingReport) {
         res.status(400).json({
@@ -1804,6 +1904,24 @@ export class DriverController {
         return;
       }
 
+      // Do NOT allow ending shift if the driver still has an active trip underway
+      const activeTrip = await Trip.findOne({
+        driverId: req.user.userId,
+        status: { $in: ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
+      });
+
+      if (activeTrip) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code: "ACTIVE_TRIP_IN_PROGRESS",
+            message: "You cannot end your shift while a trip is currently in progress. Please complete your active trip first.",
+            tripId: activeTrip._id,
+          },
+        });
+        return;
+      }
+
       const {
         odometer,
         fuel = "half",
@@ -1837,7 +1955,11 @@ export class DriverController {
       if (!shift) {
         shift = await DriverShift.findOne({
           driverId: req.user.userId,
-          pendingEndReport: true,
+          $or: [
+            { pendingEndReport: true },
+            { status: "COMPLETED", endingOdometer: { $exists: false } },
+            { status: "COMPLETED", endingOdometer: null },
+          ],
         }).sort({ createdAt: -1 });
       }
 
