@@ -354,6 +354,18 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
 
   if (!startParts || !endParts) return;
 
+  // 1. Capture existing uncompleted child trips before deleting so we can preserve individual driver assignments and statuses
+  const existingUncompletedTrips = await Trip.find({
+    parentRequestId: masterTrip._id,
+    status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVED", "DRIVER_ARRIVING"] },
+  }).select("pickupDate isReturnLeg legType driverId assignedAt status acceptedAt").lean();
+
+  const existingLegMap = new Map<string, any>();
+  for (const t of existingUncompletedTrips) {
+    const key = `${t.pickupDate}_${Boolean(t.isReturnLeg)}`;
+    existingLegMap.set(key, t);
+  }
+
   // Delete all old uncompleted child trips for this master request before recreating
   await Trip.deleteMany({
     parentRequestId: masterTrip._id,
@@ -394,7 +406,7 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
     const dayKeywords = dayMap[dayOfWeek] || [];
 
     const matchesDay =
-      recurringDaysInput.length === 0 ||
+      recurringDaysInput.length > 0 &&
       recurringDaysInput.some((userDay: string) => {
         const u = userDay.toLowerCase();
         return dayKeywords.some((kw) => u === kw || u.startsWith(kw) || kw.startsWith(u));
@@ -406,9 +418,6 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
 
       const baseFields = {
         ...baseSharedFields,
-        status: (masterTrip.status === "ACCEPTED" || masterTrip.status === "QUOTE_ACCEPTED")
-          ? "ACCEPTED"
-          : (masterTrip.status || "REQUESTED"),
         schedule: "recurring",
         recurringDays: masterTrip.recurringDays,
         startDate: startDateStr,
@@ -417,8 +426,18 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
 
       // 1. Outbound Leg (if not already completed/active)
       if (!completedKeySet.has(`${dateIsoStr}_false`)) {
+        const existingOutbound = existingLegMap.get(`${dateIsoStr}_false`);
+        const outboundDriverId = existingOutbound?.driverId || driverId;
+        const outboundAssignedAt = existingOutbound?.assignedAt || (outboundDriverId ? (masterTrip.assignedAt || new Date()) : undefined);
+        const outboundStatus = existingOutbound?.status || ((masterTrip.status === "ACCEPTED" || masterTrip.status === "QUOTE_ACCEPTED") ? "ACCEPTED" : (masterTrip.status || "REQUESTED"));
+        const outboundAcceptedAt = existingOutbound?.acceptedAt || (outboundStatus === "ACCEPTED" ? (masterTrip.acceptedAt || new Date()) : undefined);
+
         childDocs.push({
           ...baseFields,
+          driverId: outboundDriverId,
+          assignedAt: outboundAssignedAt,
+          status: outboundStatus,
+          acceptedAt: outboundAcceptedAt,
           tripType: isRoundTrip ? "round-trip" : "one-way",
           isReturnLeg: false,
           legType: "OUTBOUND",
@@ -438,11 +457,21 @@ export async function generateRecurringTripsForMaster(masterTrip: any): Promise<
 
       // 2. Return Leg (If Round-Trip and not already completed/active)
       if (isRoundTrip && !completedKeySet.has(`${dateIsoStr}_true`)) {
+        const existingReturn = existingLegMap.get(`${dateIsoStr}_true`);
+        const returnDriverId = existingReturn?.driverId || driverId;
+        const returnAssignedAt = existingReturn?.assignedAt || (returnDriverId ? (masterTrip.assignedAt || new Date()) : undefined);
+        const returnStatus = existingReturn?.status || ((masterTrip.status === "ACCEPTED" || masterTrip.status === "QUOTE_ACCEPTED") ? "ACCEPTED" : (masterTrip.status || "REQUESTED"));
+        const returnAcceptedAt = existingReturn?.acceptedAt || (returnStatus === "ACCEPTED" ? (masterTrip.acceptedAt || new Date()) : undefined);
+
         const returnTime = masterTrip.returnPickupTime || "05:00 PM";
         const returnScheduledTime = parseCentralDateTime(returnTime, dateIsoStr);
 
         childDocs.push({
           ...baseFields,
+          driverId: returnDriverId,
+          assignedAt: returnAssignedAt,
+          status: returnStatus,
+          acceptedAt: returnAcceptedAt,
           tripType: "round-trip",
           isReturnLeg: true,
           legType: "RETURN",

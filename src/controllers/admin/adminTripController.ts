@@ -836,6 +836,56 @@ export class AdminTripController {
         trip.recurringEndDate = body.returnDate;
       }
 
+      // Schedule & Trip Type Updates
+      if (body.tripType !== undefined) {
+        trip.tripType = body.tripType;
+        if (body.tripType === "round-trip" || body.tripType === "round_trip") {
+          trip.isRoundTrip = true;
+        } else if (body.tripType === "one-way") {
+          trip.isRoundTrip = false;
+        }
+      }
+
+      if (body.schedule !== undefined) {
+        trip.schedule = body.schedule;
+      }
+
+      // Recurring Transport Schedule Updates
+      if (body.recurringDays !== undefined) {
+        const daysArr = Array.isArray(body.recurringDays)
+          ? body.recurringDays
+          : (typeof body.recurringDays === "string" ? [body.recurringDays] : []);
+        trip.recurringDays = daysArr;
+        trip.markModified("recurringDays");
+      }
+
+      if (body.recurringStartDate !== undefined) {
+        trip.recurringStartDate = body.recurringStartDate;
+      }
+      if (body.recurringEndDate !== undefined) {
+        trip.recurringEndDate = body.recurringEndDate;
+      }
+      if (body.recurringPickupTime !== undefined) {
+        trip.recurringPickupTime = body.recurringPickupTime;
+      }
+      if (body.recurringAppointmentTime !== undefined) {
+        trip.recurringAppointmentTime = body.recurringAppointmentTime;
+      }
+
+      // Return Route Details (Round Trip)
+      if (body.returnPickupAddress !== undefined) {
+        trip.returnPickupAddress = body.returnPickupAddress;
+      }
+      if (body.returnDestinationAddress !== undefined) {
+        trip.returnDestinationAddress = body.returnDestinationAddress;
+      }
+      if (body.returnPickupTime !== undefined) {
+        trip.returnPickupTime = body.returnPickupTime;
+      }
+      if (body.returnDate !== undefined) {
+        trip.returnDate = body.returnDate;
+      }
+
       // Time Updates
       if (body.pickupTime !== undefined) {
         trip.pickupTime = body.pickupTime;
@@ -1062,6 +1112,27 @@ export class AdminTripController {
         .populate("driverId", "name email phone avatarUrl")
         .lean();
 
+      // Fetch child legs if this is a master request
+      const childTrips = await Trip.find({ parentRequestId: trip._id })
+        .populate("driverId", "name email phone avatarUrl")
+        .sort({ scheduledTime: 1, pickupDate: 1 })
+        .lean();
+
+      const completedChildTrips = childTrips.filter((c: any) => c.status === "COMPLETED");
+      const completedChildCount = completedChildTrips.length;
+      const isRoundTrip = trip.tripType === "round-trip" || trip.tripType === "round_trip" || (trip as any).isRoundTrip === true;
+      const completedTripsCount = childTrips.length > 0
+        ? completedChildCount
+        : (trip.status === "COMPLETED" ? (isRoundTrip ? 2 : 1) : 0);
+
+      const effectiveFare = typeof trip.fare === "number" && !isNaN(trip.fare) && trip.fare > 0
+        ? trip.fare
+        : (typeof trip.quotedFare === "number" && !isNaN(trip.quotedFare) && trip.quotedFare > 0 ? trip.quotedFare : 0);
+
+      const billableFare = childTrips.length > 0 && completedChildCount > 0
+        ? completedChildTrips.reduce((sum: number, c: any) => sum + (typeof c.fare === "number" && !isNaN(c.fare) && c.fare > 0 ? c.fare : (typeof c.quotedFare === "number" && !isNaN(c.quotedFare) && c.quotedFare > 0 ? c.quotedFare : effectiveFare)), 0)
+        : completedTripsCount * effectiveFare;
+
       let driverProfile = null;
       if (populatedTrip?.driverId) {
         const driverObjId = (populatedTrip.driverId as any)._id || populatedTrip.driverId;
@@ -1074,6 +1145,9 @@ export class AdminTripController {
         success: true,
         data: {
           ...populatedTrip,
+          childTrips,
+          completedTripsCount,
+          billableFare,
           driverProfile,
         },
       });
@@ -1159,9 +1233,17 @@ export class AdminTripController {
       }
 
       const result = await generateRecurringTripsForMaster(trip);
-      const updatedTrip = await Trip.findById(id);
+      const updatedTrip = await Trip.findById(id)
+        .populate("passengerId", "name email phone avatarUrl fullName")
+        .populate("driverId", "name email phone avatarUrl")
+        .lean();
 
-      const count = await Trip.countDocuments({ parentRequestId: trip._id });
+      const childTrips = await Trip.find({ parentRequestId: trip._id })
+        .populate("driverId", "name email phone avatarUrl")
+        .sort({ scheduledTime: 1, pickupDate: 1 })
+        .lean();
+
+      const count = childTrips.length;
 
       let message = `Successfully regenerated ${count} trip leg(s) for this request`;
       if (result?.isMasterExecutable) {
@@ -1181,7 +1263,10 @@ export class AdminTripController {
         success: true,
         message,
         count,
-        data: updatedTrip || trip,
+        data: {
+          ...(updatedTrip || trip.toObject()),
+          childTrips,
+        },
       });
     } catch (error) {
       next(error);

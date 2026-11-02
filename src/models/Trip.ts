@@ -136,6 +136,7 @@ export interface ITrip extends Document {
   // Recurring Legs & Hierarchy
   parentRequestId?: mongoose.Types.ObjectId;
   isReturnLeg?: boolean;
+  isRoundTrip?: boolean;
   legType?: "OUTBOUND" | "RETURN";
 }
 
@@ -284,6 +285,7 @@ const tripSchema = new Schema<ITrip>(
     // Recurring Legs & Hierarchy
     parentRequestId: { type: Schema.Types.ObjectId, ref: "Trip" },
     isReturnLeg: { type: Boolean },
+    isRoundTrip: { type: Boolean },
     legType: { type: String },
   },
   {
