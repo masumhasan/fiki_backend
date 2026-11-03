@@ -59,7 +59,7 @@ function extractPhotoUrls(...sources: any[]): string[] {
             });
             continue;
           }
-        } catch {}
+        } catch { }
       }
       if (!result.includes(val)) {
         result.push(val);
@@ -82,11 +82,11 @@ export interface FortnightPeriod {
 export function getFortnightlyPeriods(joinDate?: Date, count = 20): FortnightPeriod[] {
   const baseAnchor = new Date("2026-08-17T00:00:00.000Z");
   const now = new Date();
-  
+
   // Calculate how many 14-day periods have passed since the base anchor
   const msPerFortnight = 14 * 24 * 60 * 60 * 1000;
   const periodsPassed = Math.floor((now.getTime() - baseAnchor.getTime()) / msPerFortnight);
-  
+
   // The current period's start date
   const anchorCurrentStart = new Date(baseAnchor.getTime() + Math.max(0, periodsPassed) * msPerFortnight);
 
@@ -201,11 +201,11 @@ export interface ScheduleCheckResult {
  * Checks one-time changes first (emergency overrides), then weekly schedule.
  * Returns whether the driver is allowed to start a shift right now.
  * Grace window: 15 min before scheduled start.
- * Late cutoff: 60 min after scheduled end.
+ * Late cutoff: 60 min after scheduled end. 
  */
 export function resolveScheduleForToday(profile: any, now: Date = new Date()): ScheduleCheckResult {
   const GRACE_BEFORE_MS = 15 * 60 * 1000;   // 15 min early
-  const LATE_CUTOFF_MS  = 60 * 60 * 1000;   // 60 min after end
+  const LATE_CUTOFF_MS = 60 * 60 * 1000;   // 60 min after end
 
   const todayStr = getCentralTodayStr(now);
   const todayAbbr = getCentralDayAbbr(now);
@@ -231,13 +231,13 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
       isOneTimeOverride = true;
       isWorkingDay = override.working === true;
       startTime = override.startTime || "08:00 AM";
-      endTime   = override.endTime   || "04:00 PM";
+      endTime = override.endTime || "04:00 PM";
     } else {
       const weeklySchedule: any[] = profile?.weeklySchedule || [];
       const dayEntry = weeklySchedule.find((d: any) => d.day === dayAbbr);
       isWorkingDay = dayEntry ? dayEntry.working !== false : false;
       startTime = dayEntry?.startTime || "08:00 AM";
-      endTime   = dayEntry?.endTime   || "04:00 PM";
+      endTime = dayEntry?.endTime || "04:00 PM";
     }
 
     if (!isWorkingDay) {
@@ -252,7 +252,7 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
     }
 
     let startMs = parseCentralDateTime(startTime, dateStr, now).getTime();
-    let endMs   = parseCentralDateTime(endTime, dateStr, now).getTime();
+    let endMs = parseCentralDateTime(endTime, dateStr, now).getTime();
 
     // If shift is overnight (e.g. 9:00 PM to 5:00 AM), end time is next morning (+24 hours)
     if (endMs <= startMs) {
@@ -275,7 +275,7 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
 
   if (todaySched.isWorkingDay) {
     const tooEarly = nowMs < todaySched.startMs - GRACE_BEFORE_MS;
-    const tooLate  = nowMs > todaySched.endMs + LATE_CUTOFF_MS;
+    const tooLate = nowMs > todaySched.endMs + LATE_CUTOFF_MS;
 
     if (!tooEarly && !tooLate) {
       return {
@@ -299,7 +299,7 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
 
   if (yesterdaySched.isWorkingDay) {
     const tooEarly = nowMs < yesterdaySched.startMs - GRACE_BEFORE_MS;
-    const tooLate  = nowMs > yesterdaySched.endMs + LATE_CUTOFF_MS;
+    const tooLate = nowMs > yesterdaySched.endMs + LATE_CUTOFF_MS;
 
     if (!tooEarly && !tooLate) {
       return {
@@ -352,7 +352,7 @@ export function resolveScheduleForDate(profile: any, dateStr: string, now: Date 
   const sampleUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   const dayAbbr = getCentralDayAbbr(sampleUtc);
   const GRACE_BEFORE_MS = 15 * 60 * 1000;
-  const LATE_CUTOFF_MS  = 60 * 60 * 1000;
+  const LATE_CUTOFF_MS = 60 * 60 * 1000;
 
   const oneTimeChanges: any[] = profile?.oneTimeChanges || [];
   let override: any = null;
@@ -374,13 +374,13 @@ export function resolveScheduleForDate(profile: any, dateStr: string, now: Date 
     isOneTimeOverride = true;
     isWorkingDay = override.working === true;
     startTime = override.startTime || "08:00 AM";
-    endTime   = override.endTime   || "04:00 PM";
+    endTime = override.endTime || "04:00 PM";
   } else {
     const weeklySchedule: any[] = profile?.weeklySchedule || [];
     const dayEntry = weeklySchedule.find((d: any) => d.day === dayAbbr);
     isWorkingDay = dayEntry ? dayEntry.working !== false : false;
     startTime = dayEntry?.startTime || "08:00 AM";
-    endTime   = dayEntry?.endTime   || "04:00 PM";
+    endTime = dayEntry?.endTime || "04:00 PM";
   }
 
   if (!isWorkingDay) {
@@ -397,7 +397,7 @@ export function resolveScheduleForDate(profile: any, dateStr: string, now: Date 
   }
 
   let startMs = parseCentralDateTime(startTime, dateStr, now).getTime();
-  let endMs   = parseCentralDateTime(endTime, dateStr, now).getTime();
+  let endMs = parseCentralDateTime(endTime, dateStr, now).getTime();
   if (endMs <= startMs) {
     endMs += 24 * 60 * 60 * 1000;
   }
@@ -591,15 +591,15 @@ export class DriverController {
           },
           profile: profile
             ? {
-                licenseNumber: profile.licenseNumber,
-                licenseExpirationDate: profile.licenseExpirationDate,
-                avatarUrl: profile.avatarUrl || user.avatarUrl || "",
-                vehicle: profile.vehicle,
-                approvalStatus: profile.approvalStatus,
-                availabilityStatus: profile.availabilityStatus,
-                currentLocation: profile.currentLocation,
-                completedTripsCount: profile.completedTripsCount,
-              }
+              licenseNumber: profile.licenseNumber,
+              licenseExpirationDate: profile.licenseExpirationDate,
+              avatarUrl: profile.avatarUrl || user.avatarUrl || "",
+              vehicle: profile.vehicle,
+              approvalStatus: profile.approvalStatus,
+              availabilityStatus: profile.availabilityStatus,
+              currentLocation: profile.currentLocation,
+              completedTripsCount: profile.completedTripsCount,
+            }
             : null,
         },
       });
@@ -796,7 +796,7 @@ export class DriverController {
         } else if (tabName === "missed") {
           f.$or = [
             { status: "MISSED" },
-            { 
+            {
               status: { $nin: ["COMPLETED", "IN_PROGRESS", "DRIVER_ARRIVING", "DRIVER_ARRIVED", "MISSED", "CANCELLED", "QUOTE_DENIED"] },
               $or: [
                 { pickupDate: { $lt: todayStr } },
@@ -1166,24 +1166,13 @@ export class DriverController {
             ]
           });
 
-          // Check if active shift scheduled end has passed
-          const driverProfileForShift = await DriverProfile.findOne({ userId: req.user.userId }).lean();
+          // Auto-end the shift after the driver's final trip of the day is completed
           const activeShift = await DriverShift.findOne({
             driverId: req.user.userId,
             status: "IN_PROGRESS",
           });
 
-          let schedEndPassed = false;
-          if (activeShift && driverProfileForShift) {
-            const sched = resolveScheduleForDate(driverProfileForShift, activeShift.shiftDate, statusNow);
-            if (sched && sched.scheduledEndMs) {
-              schedEndPassed = statusNow.getTime() >= sched.scheduledEndMs;
-            }
-          }
-
-          // Keep active shifts open as long as the driver has assigned incomplete trips for today!
-          // Only auto-end if NO remaining trips exist AND scheduled shift end has arrived.
-          if (remainingTripsCount === 0 && schedEndPassed && activeShift) {
+          if (remainingTripsCount === 0 && activeShift) {
             isFinalTrip = true;
             const diffMs = Math.max(0, statusNow.getTime() - activeShift.startedAt.getTime());
             const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
@@ -1303,7 +1292,7 @@ export class DriverController {
       const driverId = req.user.userId;
       const user = await User.findById(driverId).lean();
       const profile = await DriverProfile.findOne({ userId: driverId }).lean();
-      
+
       const hourlyRate = profile?.hourlyRate ?? 14.0;
       const defaultApprovedHours = profile?.approvedHours ?? 80.0;
       const tripBonusPerRide = profile?.tripBonusRate ?? 3.0;
@@ -1422,7 +1411,7 @@ export class DriverController {
         const passengerName = t.fullName || (t.passengerId as any)?.name || "Passenger";
         const pickup = t.pickupLocation?.address || "Pickup";
         const dropoff = t.dropoffLocation?.address || t.returnDestinationAddress || "Destination";
-        
+
         let dateStr = "—";
         const rawDateStr = t.pickupDate || t.startDate;
         if (rawDateStr && typeof rawDateStr === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawDateStr.trim())) {
@@ -1583,7 +1572,7 @@ export class DriverController {
       const driverId = req.user.userId;
       const now = new Date();
       const driverProfile = await DriverProfile.findOne({ userId: driverId }).lean();
-      
+
       // Check & auto end shift if scheduled end time passed
       await checkAndAutoEndActiveShift(driverId, driverProfile, now);
 
@@ -1719,7 +1708,7 @@ export class DriverController {
       // 3. Weekly Schedule (7 Days of Current Week: Mon - Sun)
       const fullDayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
       const monthShortNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      
+
       const shiftMap = new Map();
       weekShifts.forEach((s: any) => {
         if (s.shiftDate) {
