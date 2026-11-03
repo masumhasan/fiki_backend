@@ -347,8 +347,10 @@ export function resolveScheduleForToday(profile: any, now: Date = new Date()): S
 }
 
 export function resolveScheduleForDate(profile: any, dateStr: string, now: Date = new Date()): ScheduleCheckResult {
-  const dateObj = new Date(dateStr + "T00:00:00");
-  const dayAbbr = getCentralDayAbbr(dateObj);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  // Sample at UTC noon (12:00:00) so Central Time is strictly on the exact same date y-m-d
+  const sampleUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const dayAbbr = getCentralDayAbbr(sampleUtc);
   const GRACE_BEFORE_MS = 15 * 60 * 1000;
   const LATE_CUTOFF_MS  = 60 * 60 * 1000;
 
@@ -356,7 +358,7 @@ export function resolveScheduleForDate(profile: any, dateStr: string, now: Date 
   let override: any = null;
   for (const ch of oneTimeChanges) {
     if (!ch?.date) continue;
-    const chDate = getCentralTodayStr(new Date(ch.date));
+    const chDate = typeof ch.date === "string" ? ch.date.split("T")[0] : getCentralTodayStr(new Date(ch.date));
     if (chDate === dateStr) {
       override = ch;
       break;
@@ -461,8 +463,9 @@ export async function checkAndAutoEndActiveShift(driverId: string | mongoose.Typ
       return activeShift;
     }
 
-    // Do NOT auto-end if driver still has scheduled incomplete trips assigned for today
+    // Do NOT auto-end if driver still has scheduled incomplete trips assigned for today / this shift date
     const todayStr = getCentralTodayStr(now);
+    const dateList = Array.from(new Set([activeShift.shiftDate, todayStr].filter(Boolean)));
     const { start: todayStart, end: todayEnd } = getCentralDayBounds(todayStr, now);
     const parentIdsWithChildren = await Trip.find({
       parentRequestId: { $exists: true, $ne: null },
@@ -471,13 +474,14 @@ export async function checkAndAutoEndActiveShift(driverId: string | mongoose.Typ
     const remainingTripsCount = await Trip.countDocuments({
       driverId,
       _id: { $nin: parentIdsWithChildren },
-      status: { $nin: ["COMPLETED", "CANCELLED", "QUOTE_DENIED", "REJECTED"] },
+      status: { $nin: ["COMPLETED", "CANCELLED", "QUOTE_DENIED", "REJECTED", "MISSED"] },
       $or: [
-        { pickupDate: todayStr },
+        { pickupDate: { $in: dateList } },
+        { returnDate: { $in: dateList } },
         {
           $and: [
             { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
-            { $or: [{ startDate: todayStr }, { createdAt: { $gte: todayStart, $lt: todayEnd } }] }
+            { $or: [{ startDate: { $in: dateList } }, { createdAt: { $gte: todayStart, $lt: todayEnd } }] }
           ]
         }
       ]
@@ -487,7 +491,8 @@ export async function checkAndAutoEndActiveShift(driverId: string | mongoose.Typ
       return activeShift;
     }
 
-    const scheduledEndDate = new Date(sched.scheduledEndMs);
+    // Auto-ending only when all assigned trips are completed:
+    // Record actual end time (now) so driver is paid for all hours worked!
     const diffMs = Math.max(0, now.getTime() - activeShift.startedAt.getTime());
     const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
     const hours = Math.floor(totalMinutes / 60);
@@ -495,7 +500,7 @@ export async function checkAndAutoEndActiveShift(driverId: string | mongoose.Typ
     const totalHoursText = `${hours}h ${mins < 10 ? "0" : ""}${mins}m`;
 
     activeShift.status = "COMPLETED";
-    activeShift.endedAt = scheduledEndDate;
+    activeShift.endedAt = now;
     activeShift.totalMinutes = totalMinutes;
     activeShift.totalHoursText = totalHoursText;
     activeShift.autoEnded = true;
@@ -957,12 +962,41 @@ export class DriverController {
       //    Driver can ALWAYS proceed and complete the trip even if scheduled shift time has passed or shift auto-ended.
       const isStartingPickup = status === "DRIVER_ARRIVING";
       const now = new Date();
+      const isTripAssignedToDriver = Boolean(
+        trip.driverId && trip.driverId.toString() === req.user.userId.toString()
+      );
 
       if (isStartingPickup) {
-        const activeShift = await DriverShift.findOne({
+        let activeShift = await DriverShift.findOne({
           driverId: req.user.userId,
           status: "IN_PROGRESS",
         }).sort({ startedAt: -1 });
+
+        // Self-healing recovery: if driver has an assigned trip today but active shift was auto-ended,
+        // reactivate the shift to IN_PROGRESS so the driver is not locked out from completing their assigned trip.
+        if (!activeShift && isTripAssignedToDriver) {
+          const centralToday = getCentralTodayStr(now);
+          const autoEndedShift = await DriverShift.findOne({
+            driverId: req.user.userId,
+            status: "COMPLETED",
+            autoEnded: true,
+            shiftDate: { $in: [trip.pickupDate || centralToday, centralToday] },
+          }).sort({ endedAt: -1 });
+
+          if (autoEndedShift) {
+            autoEndedShift.status = "IN_PROGRESS";
+            autoEndedShift.autoEnded = false;
+            autoEndedShift.pendingEndReport = false;
+            autoEndedShift.endedAt = undefined;
+            await autoEndedShift.save();
+            activeShift = autoEndedShift;
+
+            await DriverProfile.findOneAndUpdate(
+              { userId: req.user.userId },
+              { availabilityStatus: "ONLINE" }
+            );
+          }
+        }
 
         if (!activeShift) {
           res.status(400).json({
@@ -978,14 +1012,16 @@ export class DriverController {
         const driverProfile = await DriverProfile.findOne({ userId: req.user.userId }).lean();
         const sched = resolveScheduleForDate(driverProfile, activeShift.shiftDate, now);
 
-        if (sched && sched.scheduledEndMs) {
+        // Trips assigned to this driver are authorized to start and complete even if scheduled shift end has arrived.
+        // Only block unassigned trips attempted outside the driver's scheduled shift window.
+        if (!isTripAssignedToDriver && sched && sched.scheduledEndMs) {
           const wasStartedAfterEnd = activeShift.startedAt && activeShift.startedAt.getTime() >= sched.scheduledEndMs;
           if (!wasStartedAfterEnd && now.getTime() > sched.scheduledEndMs) {
             res.status(403).json({
               success: false,
               error: {
                 code: "SHIFT_TIME_EXPIRED",
-                message: `Your scheduled shift ended at ${sched.endTime}. You cannot start a new trip outside your scheduled shift hours. Please contact dispatch.`,
+                message: `Your scheduled shift ended at ${sched.endTime}. You cannot start an unassigned trip outside your scheduled shift hours. Please contact dispatch.`,
               },
             });
             return;
@@ -1108,6 +1144,7 @@ export class DriverController {
         // Check if this was the driver's final trip of the day
         if (status === "COMPLETED") {
           const todayStr = getCentralTodayStr(statusNow);
+          const dateList = Array.from(new Set([todayStr, trip.pickupDate].filter(Boolean)));
           const { start: todayStart, end: todayEnd } = getCentralDayBounds(todayStr, statusNow);
           const parentIdsWithChildren = await Trip.find({
             parentRequestId: { $exists: true, $ne: null },
@@ -1116,45 +1153,55 @@ export class DriverController {
           const remainingTripsCount = await Trip.countDocuments({
             driverId: req.user.userId,
             _id: { $ne: trip._id, $nin: parentIdsWithChildren },
-            status: { $nin: ["COMPLETED", "CANCELLED", "QUOTE_DENIED", "REJECTED"] },
+            status: { $nin: ["COMPLETED", "CANCELLED", "QUOTE_DENIED", "REJECTED", "MISSED"] },
             $or: [
-              { pickupDate: todayStr },
+              { pickupDate: { $in: dateList } },
+              { returnDate: { $in: dateList } },
               {
                 $and: [
                   { $or: [{ pickupDate: { $exists: false } }, { pickupDate: null }, { pickupDate: "" }] },
-                  { $or: [{ startDate: todayStr }, { createdAt: { $gte: todayStart, $lt: todayEnd } }] }
+                  { $or: [{ startDate: { $in: dateList } }, { createdAt: { $gte: todayStart, $lt: todayEnd } }] }
                 ]
               }
             ]
           });
 
-          if (remainingTripsCount === 0) {
-            isFinalTrip = true;
-            // Auto-end the shift after the final trip
-            const activeShift = await DriverShift.findOne({
-              driverId: req.user.userId,
-              status: "IN_PROGRESS",
-            });
+          // Check if active shift scheduled end has passed
+          const driverProfileForShift = await DriverProfile.findOne({ userId: req.user.userId }).lean();
+          const activeShift = await DriverShift.findOne({
+            driverId: req.user.userId,
+            status: "IN_PROGRESS",
+          });
 
-            if (activeShift) {
-              const diffMs = Math.max(0, statusNow.getTime() - activeShift.startedAt.getTime());
-              const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
-              const hours = Math.floor(totalMinutes / 60);
-              const mins = totalMinutes % 60;
-              const totalHoursText = `${hours}h ${mins < 10 ? "0" : ""}${mins}m`;
-
-              activeShift.status = "COMPLETED";
-              activeShift.endedAt = statusNow;
-              activeShift.totalMinutes = totalMinutes;
-              activeShift.totalHoursText = totalHoursText;
-              activeShift.autoEnded = true;
-              activeShift.pendingEndReport = true;
-              await activeShift.save();
-
-              updateObj.availabilityStatus = "OFFLINE";
-              shiftAutoEnded = true;
-              pendingEndReport = true;
+          let schedEndPassed = false;
+          if (activeShift && driverProfileForShift) {
+            const sched = resolveScheduleForDate(driverProfileForShift, activeShift.shiftDate, statusNow);
+            if (sched && sched.scheduledEndMs) {
+              schedEndPassed = statusNow.getTime() >= sched.scheduledEndMs;
             }
+          }
+
+          // Keep active shifts open as long as the driver has assigned incomplete trips for today!
+          // Only auto-end if NO remaining trips exist AND scheduled shift end has arrived.
+          if (remainingTripsCount === 0 && schedEndPassed && activeShift) {
+            isFinalTrip = true;
+            const diffMs = Math.max(0, statusNow.getTime() - activeShift.startedAt.getTime());
+            const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
+            const hours = Math.floor(totalMinutes / 60);
+            const mins = totalMinutes % 60;
+            const totalHoursText = `${hours}h ${mins < 10 ? "0" : ""}${mins}m`;
+
+            activeShift.status = "COMPLETED";
+            activeShift.endedAt = statusNow;
+            activeShift.totalMinutes = totalMinutes;
+            activeShift.totalHoursText = totalHoursText;
+            activeShift.autoEnded = true;
+            activeShift.pendingEndReport = true;
+            await activeShift.save();
+
+            updateObj.availabilityStatus = "OFFLINE";
+            shiftAutoEnded = true;
+            pendingEndReport = true;
           }
         }
 
@@ -1806,6 +1853,8 @@ export class DriverController {
         return;
       }
 
+      const todayStr = getCentralTodayStr();
+
       // Check if driver has a pending end shift report from auto-ended shift or incomplete previous shift
       const pendingReport = await DriverShift.findOne({
         driverId: req.user.userId,
@@ -1817,14 +1866,25 @@ export class DriverController {
       }).sort({ createdAt: -1 });
 
       if (pendingReport) {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: "PENDING_SHIFT_REPORT",
-            message: "Please complete your previous shift end report before starting a new shift.",
-          },
-        });
-        return;
+        // If the pending report is from an auto-ended shift on a previous day, auto-close it with this morning's starting odometer
+        // so the driver is never blocked from starting their shift today.
+        if (pendingReport.shiftDate < todayStr && pendingReport.autoEnded) {
+          pendingReport.endingOdometer = pendingReport.endingOdometer || numOdometer;
+          pendingReport.pendingEndReport = false;
+          if (pendingReport.startingOdometer && numOdometer >= pendingReport.startingOdometer) {
+            pendingReport.estimatedMiles = parseFloat((numOdometer - pendingReport.startingOdometer).toFixed(1));
+          }
+          await pendingReport.save();
+        } else {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: "PENDING_SHIFT_REPORT",
+              message: "Please complete your previous shift end report before starting a new shift.",
+            },
+          });
+          return;
+        }
       }
 
       // Check if driver already has an in-progress shift
@@ -1842,7 +1902,6 @@ export class DriverController {
       }
 
       const profile = await DriverProfile.findOne({ userId: req.user.userId }).lean();
-      const todayStr = getCentralTodayStr();
 
       // Schedule Enforcement
       const scheduleCheck = resolveScheduleForToday(profile);
