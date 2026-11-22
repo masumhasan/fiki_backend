@@ -1,8 +1,7 @@
 node_modules
 dist
-.env
-.env.*
 *.log
 branch_structure.json
 .gitignore
 uploads/
+config.bat

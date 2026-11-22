@@ -1952,22 +1952,56 @@ export class DriverController {
         return;
       }
 
-      // Do NOT allow ending shift if the driver still has an active trip underway
-      const activeTrip = await Trip.findOne({
+      let shift = await DriverShift.findOne({
         driverId: req.user.userId,
-        status: { $in: ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
+        status: "IN_PROGRESS",
       });
 
-      if (activeTrip) {
-        res.status(400).json({
+      const isEndingActiveShift = !!shift;
+
+      if (!shift) {
+        shift = await DriverShift.findOne({
+          driverId: req.user.userId,
+          $or: [
+            { pendingEndReport: true },
+            { status: "COMPLETED", endingOdometer: { $exists: false } },
+            { status: "COMPLETED", endingOdometer: null },
+          ],
+        }).sort({ createdAt: -1 });
+      }
+
+      if (!shift) {
+        res.status(404).json({
           success: false,
-          error: {
-            code: "ACTIVE_TRIP_IN_PROGRESS",
-            message: "You cannot end your shift while a trip is currently in progress. Please complete your active trip first.",
-            tripId: activeTrip._id,
-          },
+          error: { code: "NO_ACTIVE_SHIFT", message: "No active shift or pending end report found" },
         });
         return;
+      }
+
+      // Do NOT allow ending an in-progress shift if the driver still has an active trip underway today
+      if (isEndingActiveShift) {
+        const todayStr = getCentralTodayStr();
+        const activeTrip = await Trip.findOne({
+          driverId: req.user.userId,
+          status: { $in: ["DRIVER_ARRIVING", "DRIVER_ARRIVED", "IN_PROGRESS"] },
+          $or: [
+            { pickupDate: todayStr },
+            { pickupDate: { $exists: false } },
+            { pickupDate: null },
+          ],
+        });
+
+        if (activeTrip) {
+          res.status(400).json({
+            success: false,
+            error: {
+              code: "ACTIVE_TRIP_IN_PROGRESS",
+              message: "You cannot end your shift while a trip is currently in progress. Please complete your active trip first.",
+              tripId: activeTrip._id,
+            },
+          });
+          return;
+        }
       }
 
       const {
@@ -1991,30 +2025,6 @@ export class DriverController {
         res.status(400).json({
           success: false,
           error: { code: "INVALID_ODOMETER", message: "Valid ending odometer reading is required" },
-        });
-        return;
-      }
-
-      let shift = await DriverShift.findOne({
-        driverId: req.user.userId,
-        status: "IN_PROGRESS",
-      });
-
-      if (!shift) {
-        shift = await DriverShift.findOne({
-          driverId: req.user.userId,
-          $or: [
-            { pendingEndReport: true },
-            { status: "COMPLETED", endingOdometer: { $exists: false } },
-            { status: "COMPLETED", endingOdometer: null },
-          ],
-        }).sort({ createdAt: -1 });
-      }
-
-      if (!shift) {
-        res.status(404).json({
-          success: false,
-          error: { code: "NO_ACTIVE_SHIFT", message: "No active shift or pending end report found" },
         });
         return;
       }
